@@ -35,6 +35,12 @@ refuses that path, `kindle-mcp sync --browser` drives Chrome the way `login` doe
 
 ## Connect it to Claude
 
+**Claude Desktop, one click:** download `kindle-mcp-server-<version>.mcpb` from the
+[latest release](https://github.com/JCrossman/kindle-mcp/releases/latest) and open it (or drag it onto
+Settings, Extensions). Set the optional Obsidian vault in the extension's settings. Then, in a chat,
+ask Claude to run `kindle_login`: a browser window opens for the one-time Amazon sign-in, and
+`kindle_sync` pulls your highlights. No terminal needed; Chrome or Edge must be installed.
+
 Claude Code:
 
 ```bash

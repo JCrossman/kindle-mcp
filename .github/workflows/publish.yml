@@ -4,6 +4,7 @@
 #     confirm; the workflow then publishes and creates the v<version> tag itself.
 # Either way the version published is the one in package.json on the checked-out commit, a
 # version that is already on npm is refused, and the publish carries a provenance attestation.
+# After publishing, the Claude Desktop bundle (.mcpb) is built and attached to a GitHub release.
 # Authentication is npm trusted publishing (OIDC): no token or secret anywhere. The package's
 # settings on npmjs.com name this repository and this workflow file as its trusted publisher,
 # and `id-token: write` below lets the run prove it is that workflow.
@@ -59,3 +60,14 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.pkg.outputs.version }}" -m "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}"
           git push origin "v${{ steps.pkg.outputs.version }}"
+      - name: Build the Claude Desktop bundle
+        run: node scripts/build-mcpb.mjs
+      - name: GitHub release with the bundle attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.pkg.outputs.version }}" \
+            "${{ steps.pkg.outputs.name }}-${{ steps.pkg.outputs.version }}.mcpb" \
+            --title "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}" \
+            --notes "npm: https://www.npmjs.com/package/${{ steps.pkg.outputs.name }}/v/${{ steps.pkg.outputs.version }}. Claude Desktop: download the .mcpb below and open it (Settings, Extensions)." \
+            --verify-tag
