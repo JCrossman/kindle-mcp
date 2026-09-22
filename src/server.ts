@@ -6,7 +6,15 @@ import { readFileSync } from "node:fs";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ErrorCode,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  McpError,
+  type CallToolResult,
+  type GetPromptResult,
+  type ToolAnnotations,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 import { COMMANDS, commandsTable, type CommandWithAction } from "./commands.js";
@@ -98,6 +106,60 @@ export function routePendingPrompt(tag?: string, dryRun = false): string {
 
 export function weeklyBriefPrompt(since = "7d"): string {
   return loadPrompt("weekly-brief", { since });
+}
+
+/** The router prompts. Arguments are all optional strings, as MCP prompt arguments must be. */
+interface PromptSpec {
+  name: string;
+  title: string;
+  description: string;
+  arguments: Array<{ name: string; description: string; required: false }>;
+  render(args: Record<string, string>): string;
+}
+
+export const PROMPTS: PromptSpec[] = [
+  {
+    name: "kindle_route_pending",
+    title: "Route pending @commands",
+    description:
+      "Walk every pending @command, do what each one asks, and mark it done. Runner-agnostic: works interactively or from a scheduled task.",
+    arguments: [
+      { name: "tag", description: "Only route this tag, e.g. 'post'", required: false },
+      { name: "dry_run", description: "'true' to list planned actions without writing or marking anything", required: false },
+    ],
+    render: (a) => routePendingPrompt(a.tag, a.dry_run === "true"),
+  },
+  {
+    name: "kindle_weekly_brief",
+    title: "Weekly reading brief",
+    description: "Cluster recent highlights into themes and draft one cited angle per theme.",
+    arguments: [{ name: "since", description: "Span like '7d' or an ISO date; default 7d", required: false }],
+    render: (a) => weeklyBriefPrompt(a.since || "7d"),
+  },
+];
+
+/**
+ * Prompts are registered on the low-level server rather than through McpServer.registerPrompt:
+ * SDK 1.30 validates `params.arguments` against the zod schema even when a client omits the
+ * key entirely (legal per the spec, and what "run it with no options" looks like), and rejects
+ * `undefined`. Here a missing object means no arguments.
+ */
+function registerPrompts(server: McpServer): void {
+  server.server.registerCapabilities({ prompts: {} });
+  server.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map(({ name, title, description, arguments: args }) => ({ name, title, description, arguments: args })),
+  }));
+  server.server.setRequestHandler(GetPromptRequestSchema, async (request): Promise<GetPromptResult> => {
+    const spec = PROMPTS.find((p) => p.name === request.params.name);
+    if (!spec) throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} not found`);
+    const given = request.params.arguments ?? {};
+    const args: Record<string, string> = {};
+    for (const a of spec.arguments) {
+      const v = given[a.name];
+      if (v !== undefined && v !== null && v !== "") args[a.name] = String(v);
+    }
+    return { description: spec.description, messages: [{ role: "user", content: { type: "text", text: spec.render(args) } }] };
+  });
 }
 
 export function createServer(cfg: Config): McpServer {
@@ -322,30 +384,7 @@ export function createServer(cfg: Config): McpServer {
     async () => withStore((store) => reply({ ...store.status(), obsidian_vault: cfg.obsidianVault, obsidian_folder: cfg.obsidianFolder })),
   );
 
-  server.registerPrompt(
-    "kindle_route_pending",
-    {
-      title: "Route pending @commands",
-      description: "Walk every pending @command, do what each one asks, and mark it done. Runner-agnostic: works interactively or from a scheduled task.",
-      argsSchema: {
-        tag: z.string().optional().describe("Only route this tag, e.g. 'post'"),
-        dry_run: z.string().optional().describe("'true' to list planned actions without writing or marking anything"),
-      },
-    },
-    ({ tag, dry_run }) => ({
-      messages: [{ role: "user", content: { type: "text", text: routePendingPrompt(tag, dry_run === "true") } }],
-    }),
-  );
-
-  server.registerPrompt(
-    "kindle_weekly_brief",
-    {
-      title: "Weekly reading brief",
-      description: "Cluster recent highlights into themes and draft one cited angle per theme.",
-      argsSchema: { since: z.string().optional().describe("Span like '7d' or an ISO date; default 7d") },
-    },
-    ({ since }) => ({ messages: [{ role: "user", content: { type: "text", text: weeklyBriefPrompt(since || "7d") } }] }),
-  );
+  registerPrompts(server);
 
   return server;
 }

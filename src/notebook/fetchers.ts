@@ -62,27 +62,36 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
   };
 }
 
-/** Launch the user's own Chrome (or Edge, or a Playwright-managed Chromium) with our separate profile. */
-export async function launchContext(profileDir: string, headless: boolean): Promise<BrowserContext> {
+/**
+ * Launch a Chromium-based browser with our separate profile: an explicit executable if configured
+ * (KINDLE_BROWSER_PATH), else the user's Chrome, then Edge, then a Playwright-managed Chromium.
+ */
+export async function launchContext(profileDir: string, headless: boolean, executablePath: string | null = null): Promise<BrowserContext> {
   const { chromium } = await import("playwright-core");
-  const attempts: Array<{ channel?: "chrome" | "msedge" }> = [{ channel: "chrome" }, { channel: "msedge" }, {}];
+  const attempts: Array<{ channel?: "chrome" | "msedge"; executablePath?: string }> = [
+    ...(executablePath ? [{ executablePath }] : []),
+    { channel: "chrome" },
+    { channel: "msedge" },
+    {},
+  ];
   const errors: string[] = [];
   for (const opts of attempts) {
     try {
       return await chromium.launchPersistentContext(profileDir, { ...opts, headless });
     } catch (e) {
-      errors.push(`${opts.channel ?? "chromium"}: ${(e as Error).message.split("\n")[0]}`);
+      errors.push(`${opts.executablePath ?? opts.channel ?? "chromium"}: ${(e as Error).message.split("\n")[0]}`);
     }
   }
   throw new Error(
-    "No browser found. Install Google Chrome or Microsoft Edge, or run `npx playwright install chromium`.\n" +
+    "No browser found. Install Google Chrome or Microsoft Edge, set KINDLE_BROWSER_PATH to a Chromium-based browser, " +
+      "or run `npx playwright install chromium`.\n" +
       errors.join("\n"),
   );
 }
 
 /** A real browser navigating to each URL. Slow, but exactly what a human session looks like. */
 export async function browserFetcher(cfg: Config, headless = true): Promise<FetcherHandle> {
-  const ctx = await launchContext(cfg.browserProfile, headless);
+  const ctx = await launchContext(cfg.browserProfile, headless, cfg.browserPath);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   return {
     async fetch(url: string): Promise<FetchResult> {

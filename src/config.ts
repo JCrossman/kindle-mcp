@@ -15,6 +15,8 @@ export interface Config {
   requestDelayMs: number;
   /** Shell command run after a sync that leaves @commands pending (KINDLE_ON_PENDING). */
   onPending: string | null;
+  /** Explicit browser executable for login/doctor/--browser (KINDLE_BROWSER_PATH); else Chrome, Edge, bundled Chromium. */
+  browserPath: string | null;
 }
 
 function expand(p: string): string {
@@ -34,6 +36,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     obsidianFolder: env.OBSIDIAN_FOLDER || "Kindle",
     requestDelayMs: Math.round(parseFloat(env.KINDLE_REQUEST_DELAY || "1.5") * 1000),
     onPending: env.KINDLE_ON_PENDING || null,
+    browserPath: env.KINDLE_BROWSER_PATH ? expand(env.KINDLE_BROWSER_PATH) : null,
   };
 }
 

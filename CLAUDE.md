@@ -32,9 +32,13 @@ prompt -> optional Obsidian export. See README.md.
 ## Verified
 - Python version, live account (2026-09-21): 19 books, 471 highlights; library page, annotation pane, pagination,
   notes, undisplayable highlights, incremental sync.
-- TypeScript port: same fixtures and golden ids; sync + cookie write-back + `--on-pending` hook tested end to end
-  against a local fixture server. The plain-HTTP path against the real site and cookie lifetime are not yet
-  verified live: run `kindle-mcp login`, `doctor`, then `sync` and expect `highlights_new: 0` on an existing store.
+- TypeScript port (2026-09-22): same fixtures and golden ids; sync + cookie write-back + `--on-pending` hook, and
+  headless `login` + `sync --browser`, tested end to end against a local fixture server (browser tests need
+  `KINDLE_BROWSER_PATH` or Chrome/Edge, else they skip). The built stdio server passed a 72-check protocol pass
+  (all tools, edge cases, response cap, prompts with and without arguments, concurrency, shutdown), the MCP
+  Inspector CLI, and Claude Code 2.1 as a client, including `/mcp__kindle__kindle_route_pending todo true` running
+  the router in dry-run mode. Not yet verified live: the plain-HTTP path against the real site and cookie
+  lifetime. Run `kindle-mcp login`, `doctor`, then `sync` and expect `highlights_new: 0` on an existing store.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.

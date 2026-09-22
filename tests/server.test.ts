@@ -103,6 +103,16 @@ describe("MCP server", () => {
     expect(routePendingPrompt()).not.toContain("DRY RUN");
     for (const c of COMMANDS) expect(serverInstructions()).toContain(`@${c.tag}`);
 
+    // Clients may omit the arguments object entirely when every argument is optional.
+    const bare = await client.getPrompt({ name: "kindle_route_pending" });
+    expect((bare.messages[0].content as { text: string }).text).toBe(routePendingPrompt());
+    const empty = await client.getPrompt({ name: "kindle_route_pending", arguments: {} });
+    expect((empty.messages[0].content as { text: string }).text).toBe(routePendingPrompt());
+    await expect(client.getPrompt({ name: "nope" })).rejects.toThrow(/not found/);
+    const listed = (await client.listPrompts()).prompts.find((p) => p.name === "kindle_route_pending")!;
+    expect(listed.arguments?.map((a) => a.name)).toEqual(["tag", "dry_run"]);
+    expect(listed.arguments?.every((a) => a.required === false)).toBe(true);
+
     const brief = await client.getPrompt({ name: "kindle_weekly_brief", arguments: { since: "14d" } });
     expect((brief.messages[0].content as { text: string }).text).toContain("`14d`");
     expect(weeklyBriefPrompt()).toContain("`7d`");

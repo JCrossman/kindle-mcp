@@ -25,7 +25,8 @@ kindle-mcp sync           # first run reads every book; later runs only changed 
 kindle-mcp status
 ```
 
-`login` needs Google Chrome or Microsoft Edge installed (or run `npx playwright install chromium`).
+`login` needs Google Chrome or Microsoft Edge installed. Any Chromium-based browser works via
+`KINDLE_BROWSER_PATH=/path/to/browser` (Brave, Chromium on Linux), or run `npx playwright install chromium`.
 It saves the Amazon session cookies to `~/.kindle-mcp/session.json` with owner-only permissions.
 Your password is never seen or stored by this code. Treat that file like a credential.
 
@@ -85,7 +86,7 @@ The router is a prompt, not a scheduler. Pick whichever runner suits you:
 **cron or launchd (hourly is cheap; an idle sync is two requests):**
 
 ```cron
-30 * * * * PATH=/usr/local/bin:$PATH kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle__*,Read,Write,Edit,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
+30 * * * * PATH=/usr/local/bin:$PATH kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,Read,Write,Edit,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
 ```
 
 Register the server for Claude Code first (`claude mcp add --scope user kindle ...` above) so the
@@ -96,8 +97,9 @@ prompt is the output of `kindle-mcp prompt route-pending`, with the kindle serve
 config. It runs when the app is running.
 
 **Interactively:** in Claude Code type `/mcp__kindle__kindle_route_pending` (or `/mcp__kindle` and
-pick from the list); in Claude Desktop pick the prompt from the server's prompt menu. Pass
-`dry_run=true` the first time to see what it would do without writing or marking anything.
+pick from the list); arguments are positional, so `/mcp__kindle__kindle_route_pending todo true`
+routes only `@todo` as a dry run. In Claude Desktop pick the prompt from the server's prompt menu.
+Use a dry run the first time to see what it would do without writing or marking anything.
 
 `kindle-mcp prompt weekly-brief` does the same for the reading brief: recent highlights clustered
 into themes, one cited angle per theme, `@post` items first.
@@ -155,6 +157,7 @@ created by it keep working.
 | `KINDLE_NOTEBOOK_BASE` | `https://read.amazon.com` |
 | `KINDLE_REQUEST_DELAY` | `1.5` seconds per page    |
 | `KINDLE_ON_PENDING`    | unset; same as `sync --on-pending` |
+| `KINDLE_BROWSER_PATH`  | unset; explicit browser executable for `login`, `doctor`, `--browser` |
 | `OBSIDIAN_VAULT`       | unset                     |
 | `OBSIDIAN_FOLDER`      | `Kindle`                  |
 

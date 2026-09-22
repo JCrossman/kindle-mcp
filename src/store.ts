@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { parseCommands, withActions, type Command, type CommandWithAction } from "./commands.js";
+import { parseCommands, resolveTag, withActions, type Command, type CommandWithAction } from "./commands.js";
 import type { Book, Highlight } from "./models.js";
 
 export const SCHEMA = `
@@ -404,7 +404,7 @@ export class Store {
       limit,
     );
     if (!tag) return out;
-    const want = tag.toLowerCase().replace(/^@+/, "");
+    const want = resolveTag(tag.trim().replace(/^@+/, ""));
     return out.filter((h) => h.commands.some((c) => c.tag === want));
   }
 

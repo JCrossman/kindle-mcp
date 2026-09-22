@@ -178,6 +178,8 @@ describe("store", () => {
     expect(pending).toHaveLength(1);
     expect(store.pendingCommands("project").map((h) => h.id)).toEqual([pending[0].id]);
     expect(store.pendingCommands("@post").map((h) => h.id)).toEqual([pending[0].id]);
+    expect(store.pendingCommands("p").map((h) => h.id)).toEqual([pending[0].id]); // aliases resolve
+    expect(store.pendingCommands("@pr").map((h) => h.id)).toEqual([pending[0].id]);
     expect(store.pendingCommands("todo")).toEqual([]);
     expect(store.status().pending_by_tag).toEqual({ post: 1, project: 1 });
     expect(store.markCommandsDone(pending[0].id)).toBe(true);

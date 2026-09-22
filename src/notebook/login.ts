@@ -7,8 +7,8 @@ import { launchContext } from "./fetchers.js";
 import { saveSession } from "./session.js";
 import * as S from "./selectors.js";
 
-export async function login(cfg: Config, timeoutMs = 600_000): Promise<boolean> {
-  const ctx = await launchContext(cfg.browserProfile, false);
+export async function login(cfg: Config, timeoutMs = 600_000, headless = false): Promise<boolean> {
+  const ctx = await launchContext(cfg.browserProfile, headless, cfg.browserPath);
   try {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(S.libraryUrl(cfg.notebookBase));
@@ -17,7 +17,8 @@ export async function login(cfg: Config, timeoutMs = 600_000): Promise<boolean> 
     } catch {
       return false;
     }
-    const cookies = (await ctx.cookies()).filter((c) => c.domain.includes("amazon"));
+    const host = new URL(cfg.notebookBase).hostname;
+    const cookies = (await ctx.cookies()).filter((c) => c.domain.includes("amazon") || host.endsWith(c.domain.replace(/^\./, "")));
     saveSession(cfg.sessionPath, {
       savedAt: new Date().toISOString(),
       cookies: cookies.map((c) => ({
