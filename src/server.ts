@@ -2,7 +2,7 @@
  * MCP interface over the local store. Reads are instant (SQLite); only kindle_sync touches Amazon.
  * createServer() is transport-free; serveStdio() wires it to stdio.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -163,6 +163,8 @@ function registerPrompts(server: McpServer): void {
     return { description: spec.description, messages: [{ role: "user", content: { type: "text", text: spec.render(args) } }] };
   });
 }
+
+let loginInProgress = false;
 
 export function createServer(cfg: Config): McpServer {
   const server = new McpServer({ name: "kindle-mcp", version: SERVER_VERSION }, { instructions: serverInstructions() });
@@ -380,10 +382,54 @@ export function createServer(cfg: Config): McpServer {
     "kindle_status",
     {
       title: "Store status",
-      description: "Store counts, truncated-highlight count, pending @commands by tag, the last sync run, and where the Obsidian vault is (if configured).",
+      description:
+        "Store counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon " +
+        "session is saved, and where the Obsidian vault is (if configured).",
       annotations: READ,
     },
-    async () => withStore((store) => reply({ ...store.status(), obsidian_vault: cfg.obsidianVault, obsidian_folder: cfg.obsidianFolder })),
+    async () =>
+      withStore((store) =>
+        reply({
+          ...store.status(),
+          session_saved: existsSync(cfg.sessionPath),
+          login_in_progress: loginInProgress,
+          obsidian_vault: cfg.obsidianVault,
+          obsidian_folder: cfg.obsidianFolder,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "kindle_login",
+    {
+      title: "Sign in to Amazon",
+      description:
+        "Open a browser window on this machine for the user to sign in to Amazon (2FA included). Returns as soon " +
+        "as the window is open; the session is saved when the Kindle notebook loads, up to 10 minutes later. " +
+        "kindle_status shows session_saved once it is done. Needed once, and again when kindle_sync reports needs_human.",
+      inputSchema: {},
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async () => {
+      if (loginInProgress) return reply({ ok: true, message: "A sign-in window is already open. Finish signing in there." });
+      const { startLogin } = await import("./notebook/login.js");
+      try {
+        ensureDirs(cfg);
+        const handle = await startLogin(cfg);
+        loginInProgress = true;
+        void handle.done.finally(() => {
+          loginInProgress = false;
+        });
+        return reply({
+          ok: true,
+          message:
+            "A browser window opened on this machine. Sign in to Amazon there; the session is saved automatically when " +
+            "your Kindle notebook loads. Then call kindle_status (session_saved: true) and kindle_sync.",
+        });
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+    },
   );
 
   registerPrompts(server);

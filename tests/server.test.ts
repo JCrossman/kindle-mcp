@@ -43,10 +43,10 @@ describe("MCP server", () => {
       expect.arrayContaining([
         "kindle_list_books", "kindle_get_highlights", "kindle_search_highlights", "kindle_get_new_since",
         "kindle_get_pending_commands", "kindle_get_command_context", "kindle_mark_command_done",
-        "kindle_export_to_obsidian", "kindle_sync", "kindle_status",
+        "kindle_export_to_obsidian", "kindle_sync", "kindle_status", "kindle_login",
       ]),
     );
-    expect(tools).toHaveLength(10);
+    expect(tools).toHaveLength(11);
     expect((await client.listPrompts()).prompts.map((p) => p.name).sort()).toEqual(["kindle_route_pending", "kindle_weekly_brief"]);
 
     expect((await call(client, "kindle_search_highlights", { query: "blindness" })).data.count).toBe(1);
@@ -62,6 +62,8 @@ describe("MCP server", () => {
     expect(status.pending_by_tag).toEqual({ post: 1, project: 1 });
     expect(status.obsidian_vault).toMatch(/vault$/);
     expect(status.obsidian_folder).toBe("Kindle");
+    expect(status.session_saved).toBe(false);
+    expect(status.login_in_progress).toBe(false);
   });
 
   it("walks the command queue: pending -> context -> done", async () => {
