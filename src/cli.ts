@@ -128,7 +128,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       if (values.book && !store.findBook(values.book)) throw new Error(`No book matches '${values.book}'.`);
       return (await updateVault(cfg, store, values.book ?? null)) ? 0 : 1;
     } else if (cmd === "link-existing") {
-      return linkExisting(cfg, store, values.book ?? null, values.apply, values.always ? "always" : values.never ? "never" : null);
+      return await linkExisting(cfg, store, values.book ?? null, values.apply, values.always ? "always" : values.never ? "never" : null);
     } else if (cmd === "status") {
       console.log(JSON.stringify(store.status(), null, 2));
     } else {

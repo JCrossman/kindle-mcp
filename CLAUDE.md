@@ -59,6 +59,12 @@ files @todo/@quote/@project itself, and hands @post/@research to the agent, whic
   `KINDLE_BROWSER_PATH` or Chrome/Edge, else they skip); a 72-check stdio protocol pass, the MCP Inspector CLI, and
   Claude Code as a client. Live from Claude Desktop with the 1.0.3 bundle: `kindle_login` and the plain-HTTP
   incremental sync.
+- 1.1.0 (2026-09-22), against the local fixture server and temp vaults: CLI sync, a 1.0-format book note linked on
+  `link-existing --apply`, a second sync writing nothing, every generated block link resolving to a block id in
+  the documented form; a 19-check stdio pass including a CLI sync and a server sync racing (nothing filed twice);
+  the packed bundle's handshake (14 tools); headless Claude Code told only "Sync my Kindle highlights" saving the
+  @post through `kindle_complete_command` unasked, and only offering with `KINDLE_ACT_ON_COMMANDS=false`. Not yet
+  checked inside Obsidian itself (hover previews, Tasks plugin) or live against Amazon with 1.1.0.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.

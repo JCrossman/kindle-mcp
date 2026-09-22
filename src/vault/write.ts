@@ -166,6 +166,7 @@ export function sanitizeName(raw: string, max = 100): string | null {
     .normalize("NFC")
     .replace(/[\\/:*?"<>|#^[\]%]/g, " ")
     .replace(/\p{Cc}/gu, " ")
+    .replace(/(^|\s)\.+(?=\s|$)/g, " ") // "." and ".." tokens left over from a path
     .replace(/\s+/g, " ")
     .trim()
     .replace(/^\.+/, "")

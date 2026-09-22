@@ -169,6 +169,7 @@ describe("store", () => {
     expect(merged.commands.map((c) => [c.tag, c.arg])).toEqual([["research", ""]]); // device note attached to its highlight
     expect(merged.commands[0].action).toContain("research");
     expect(store.status().books).toBe(3); // Kahneman matched, not duplicated
+    expect(store.findBook(bookId)!.author).toBe("Daniel Kahneman"); // the cloud's form of the name stays
     store.close();
   });
   it("tracks the pending-commands lifecycle", () => {

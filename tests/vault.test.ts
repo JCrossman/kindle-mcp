@@ -139,6 +139,7 @@ describe("vault writes", () => {
   it("makes names safe and model output inert", () => {
     expect(sanitizeName("  ..Why: loss [aversion]? #1  ")).toBe("Why loss aversion 1");
     expect(sanitizeName("CON")).toBe("CON (note)");
+    expect(sanitizeName("../../../etc/evil")).toBe("etc evil");
     expect(sanitizeName("trailing dots...")).toBe("trailing dots");
     expect(sanitizeName("???")).toBeNull();
     expect(neutralize("```dataviewjs\ndv.x()\n```\n`$= dv.y` <% tp.z %> <script>")).toBe("```text\ndv.x()\n```\n`\\$= dv.y` <\\% tp.z %> &lt;script>");

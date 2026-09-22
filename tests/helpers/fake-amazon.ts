@@ -2,8 +2,9 @@
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const FX = join(__dirname, "..", "fixtures");
+const FX = fileURLToPath(new URL("../fixtures", import.meta.url));
 
 export interface FakeAmazon {
   base: string;

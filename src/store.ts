@@ -244,6 +244,7 @@ export class Store {
     return row ? row.book_id : book.bookId;
   }
 
+  /** Cloud copies (with an ASIN) set the title and author; clippings ("Last, First") only fill gaps. */
   upsertBook(book: Book): string {
     const bookId = this.resolveBookId(book);
     this.db
@@ -252,7 +253,8 @@ export class Store {
          ON CONFLICT(book_id) DO UPDATE SET
            asin = COALESCE(excluded.asin, books.asin),
            title = CASE WHEN excluded.asin IS NOT NULL THEN excluded.title ELSE books.title END,
-           author = CASE WHEN excluded.author != '' THEN excluded.author ELSE books.author END`,
+           author = CASE WHEN excluded.author != '' AND (excluded.asin IS NOT NULL OR books.author = '')
+                         THEN excluded.author ELSE books.author END`,
       )
       .run(bookId, book.asin, book.title, book.author, titleKey(book.title));
     return bookId;
