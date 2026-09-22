@@ -29,4 +29,14 @@ describe("loadConfig", () => {
     expect(loadConfig({ KINDLE_ON_PENDING: "${user_config.hook}" }).onPending).toBeNull();
     expect(loadConfig({ KINDLE_REQUEST_DELAY: "soon" }).requestDelayMs).toBe(1500);
   });
+  it("reads the 1.1 settings: on by default, off by word, placeholders ignored", () => {
+    const d = loadConfig({});
+    expect([d.actOnCommands, d.autoFile, d.linkNotes, d.linkExclude, d.syncBudgetMs]).toEqual([true, true, true, [], 40_000]);
+    const off = loadConfig({ KINDLE_ACT_ON_COMMANDS: "false", KINDLE_AUTO_FILE: "0", KINDLE_LINK_NOTES: "No", KINDLE_LINK_EXCLUDE: " Journal , Private/Health ,", KINDLE_SYNC_BUDGET_MS: "5000" });
+    expect([off.actOnCommands, off.autoFile, off.linkNotes, off.linkExclude, off.syncBudgetMs]).toEqual([false, false, false, ["Journal", "Private/Health"], 5000]);
+    const unset = loadConfig({ KINDLE_ACT_ON_COMMANDS: "${user_config.act_on_commands}", KINDLE_LINK_EXCLUDE: "${user_config.link_exclude}" });
+    expect([unset.actOnCommands, unset.linkExclude]).toEqual([true, []]);
+    expect(loadConfig({ OBSIDIAN_FOLDER: "\\Reading\\Kindle\\" }).obsidianFolder).toBe("Reading/Kindle");
+    expect(loadConfig({ OBSIDIAN_FOLDER: "../outside" }).obsidianFolder).toBe("Kindle");
+  });
 });

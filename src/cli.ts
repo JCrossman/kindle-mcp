@@ -3,10 +3,13 @@
  * Command line: the scheduled job and the one-time login both live here.
  *
  *   kindle-mcp login                      open a browser, sign in to Amazon once
- *   kindle-mcp sync [--full] [--book X]   pull the cloud notebook (plain HTTP with saved cookies)
- *              [--browser] [--export] [--on-pending CMD]
+ *   kindle-mcp sync [--full] [--book X]   pull the cloud notebook (plain HTTP with saved cookies), then
+ *              [--browser] [--no-export]  update the Obsidian vault if one is set
+ *              [--on-pending CMD]
  *   kindle-mcp import-clippings PATH      merge a My Clippings.txt from the device
- *   kindle-mcp export [--book X]          write/append Obsidian notes
+ *   kindle-mcp export [--book X]          update the Obsidian vault without contacting Amazon
+ *   kindle-mcp link-existing [--apply]    preview (or apply) links in highlights exported before
+ *              [--book X] [--always|--never]
  *   kindle-mcp status                     counts, pending @commands, last run
  *   kindle-mcp doctor [--asin X|--book T] dump live HTML to debug selectors
  *   kindle-mcp prompt NAME [--tag X]      print a router prompt (route-pending | weekly-brief) for any runner
@@ -27,10 +30,13 @@ quietExperimentalWarnings();
 const USAGE = `kindle-mcp <command> [options]
 
   login                                  open a browser, sign in to Amazon once
-  sync [--full] [--book X] [--browser]   pull the cloud notebook; --browser forces Playwright
-       [--export] [--on-pending CMD]     --export appends to Obsidian; --on-pending runs CMD if @commands are pending
+  sync [--full] [--book X] [--browser]   pull the cloud notebook; --browser forces Playwright; then, with
+       [--no-export] [--on-pending CMD]  OBSIDIAN_VAULT set, add new highlights and file @todo/@quote/@project
+                                         (--no-export skips that); --on-pending runs CMD if @commands are left
   import-clippings PATH                  merge a My Clippings.txt from the device
-  export [--book X]                      write/append Obsidian notes (needs OBSIDIAN_VAULT)
+  export [--book X]                      update the vault without contacting Amazon (needs OBSIDIAN_VAULT)
+  link-existing [--apply] [--book X]     preview links for highlights exported before; --apply writes them;
+                [--always | --never]     --always also links future matches, --never stops the question
   status                                 counts, pending @commands, last run
   doctor [--asin X | --book TITLE]       dump live HTML to ~/.kindle-mcp and report what the parser finds
   prompt route-pending [--tag X] [--dry-run]
@@ -48,7 +54,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       tag: { type: "string" },
       asin: { type: "string" },
       browser: { type: "boolean", default: false },
-      export: { type: "boolean", default: false },
+      export: { type: "boolean", default: false }, // 1.0 flag; the vault step now runs whenever a vault is set
+      "no-export": { type: "boolean", default: false },
+      apply: { type: "boolean", default: false },
+      always: { type: "boolean", default: false },
+      never: { type: "boolean", default: false },
       "on-pending": { type: "string" },
       "dry-run": { type: "boolean", default: false },
       since: { type: "string" },
@@ -97,7 +107,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const { syncCloud } = await import("./sync.js");
       const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser });
       console.log(JSON.stringify(stats));
-      if (values.export) await exportNotes(cfg, store, null);
+      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
       const hook = values["on-pending"] ?? cfg.onPending;
       const pending = store.status().pending_commands;
       if (hook && pending > 0) {
@@ -112,8 +122,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       if (!positionals[1]) throw new Error("import-clippings needs the path to My Clippings.txt");
       const { importClippings } = await import("./sync.js");
       importClippings(store, positionals[1]);
+      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
     } else if (cmd === "export") {
-      await exportNotes(cfg, store, values.book ?? null);
+      if (!cfg.obsidianVault) throw new Error("Set OBSIDIAN_VAULT to your vault path first.");
+      if (values.book && !store.findBook(values.book)) throw new Error(`No book matches '${values.book}'.`);
+      return (await updateVault(cfg, store, values.book ?? null)) ? 0 : 1;
+    } else if (cmd === "link-existing") {
+      return await linkExisting(cfg, store, values.book ?? null, values.apply, values.always ? "always" : values.never ? "never" : null);
     } else if (cmd === "status") {
       console.log(JSON.stringify(store.status(), null, 2));
     } else {
@@ -159,11 +174,36 @@ async function doctor(cfg: Config, asin: string | null, bookTitle: string | null
   }
 }
 
-async function exportNotes(cfg: Config, store: InstanceType<typeof import("./store.js").Store>, book: string | null): Promise<void> {
-  const { exportAll, exportBook } = await import("./obsidian.js");
+type StoreT = InstanceType<typeof import("./store.js").Store>;
+
+/** The vault step; prints its summary. False when the vault could not be written. */
+async function updateVault(cfg: Config, store: StoreT, book: string | null): Promise<boolean> {
+  const { runVaultStep } = await import("./vault/run.js");
+  const r = runVaultStep(cfg, store, { restoreBook: book });
+  console.log(JSON.stringify({ obsidian: r }));
+  if (r.error) console.error(`ERROR: ${r.error}`);
+  else if (r.skipped) console.error(`Vault not updated this time (${r.skipped}); the next run continues.`);
+  return !r.error;
+}
+
+async function linkExisting(cfg: Config, store: StoreT, book: string | null, apply: boolean, remember: "always" | "never" | null): Promise<number> {
   if (!cfg.obsidianVault) throw new Error("Set OBSIDIAN_VAULT to your vault path first.");
-  const results = book ? [exportBook(store, book, cfg.obsidianVault, cfg.obsidianFolder)] : exportAll(store, cfg.obsidianVault, cfg.obsidianFolder);
-  console.log(`Exported ${results.length} book(s), ${results.reduce((n, r) => n + r.added, 0)} new highlight(s).`);
+  const { applyBackfill, planBackfill } = await import("./vault/backfill.js");
+  const { openVault, setLinkExistingPreference, withVaultLease } = await import("./vault/run.js");
+  const open = openVault(cfg, store);
+  try {
+    const out = withVaultLease(store, () => {
+      if (remember) setLinkExistingPreference(store, open.ctx.vault, remember);
+      if (apply) return { applied: applyBackfill(open.ctx, book) };
+      const { blocks, links, samples } = planBackfill(open.ctx, book);
+      return { preview: { blocks, links, samples }, next: "Run again with --apply to write these links." };
+    });
+    if (out === "busy") throw new Error("Another kindle-mcp process is writing to the vault; try again in a minute.");
+    console.log(JSON.stringify(out, null, 2));
+    return 0;
+  } finally {
+    open.close();
+  }
 }
 
 function invokedDirectly(): boolean {
