@@ -199,11 +199,20 @@ provenance. It needs an `NPM_TOKEN` repository secret.
 
 ## Repository settings (maintainers)
 
-`scripts/repo-settings.sh OWNER/REPO [--public]` applies the security settings with the GitHub CLI:
-verified-only actions with a read-only token, Dependabot alerts and security updates, private
-vulnerability reporting, a ruleset on the default branch (pull requests required, threads resolved,
-CI green, no force pushes or deletions), and with `--public` the visibility change plus secret
-scanning with push protection. Run `gh auth login` first.
+Everything security-related about the repository itself is applied by one script, run once on
+your own machine with the GitHub CLI:
+
+```bash
+gh auth login                                        # device-code flow in the browser
+gh secret set NPM_TOKEN --repo OWNER/REPO            # paste the npm granular token when prompted
+scripts/repo-settings.sh OWNER/REPO --public         # settings, then public + secret scanning
+```
+
+It sets verified-only actions with a read-only token, Dependabot alerts and security updates,
+private vulnerability reporting, and a ruleset on the default branch (pull requests required,
+review threads resolved, CI green on an up-to-date branch, no force pushes or deletions). With
+`--public` it also flips visibility and enables secret scanning with push protection, which
+GitHub only allows on public repositories. Re-running is safe; it prints the resulting state.
 
 ## Next layers (not built)
 
