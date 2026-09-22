@@ -1,31 +1,45 @@
 # kindle-mcp
 
-Kindle highlights and notes as an agent-readable store. Sync engine (Playwright, read.amazon.com/notebook)
--> SQLite + FTS -> MCP server (9 tools) -> Obsidian export + @command queue. See README.md.
+Kindle highlights and notes as an agent-readable store. Sync engine (fetch + saved cookies, Playwright
+only for login) -> SQLite + FTS -> MCP server over stdio (10 tools, 2 prompts) -> @command router
+prompt -> optional Obsidian export. See README.md.
 
 ## Setup
-    python3.12 -m venv .venv && source .venv/bin/activate
-    pip install -e ".[dev]" && playwright install chromium
-    python -m pytest -q          # 14 tests; fixtures are scrubbed real page markup
+    npm install && npm test          # vitest; fixtures are scrubbed real page markup
+    npm run build && node dist/cli.js --help
 
-## Layout
-- `src/kindle_mcp/notebook_selectors.py` — every DOM assumption about Amazon's page. Change here first when a sync breaks.
-- `notebook_parser.py` — pure HTML -> models; unit-tested. `scraper.py` — Playwright only.
-- `store.py` — SQLite. Cloud highlights keyed by Amazon annotation id; clippings merge by (book, location).
-- `commands.py` — @tag grammar (`ARG_STYLE`). `server.py` — MCP tools. `cli.py` — login/sync/doctor/serve.
+## Layout (TypeScript, Node >= 22.13, ESM)
+- `src/notebook/selectors.ts` — every DOM assumption about Amazon's page. Change here first when a sync breaks.
+- `src/notebook/parser.ts` — pure HTML -> models (cheerio); unit-tested. `client.ts` — pagination + sign-in
+  detection over a `Fetcher`. `fetchers.ts` — cookie fetcher (cron path) and browser fetcher (fallback).
+  `login.ts` — headed Chrome once, saves `session.json`. `session.ts` — cookie jar.
+- `src/store.ts` — node:sqlite. Cloud highlights keyed by Amazon annotation id; clippings merge by (book, location).
+  Ids are sha1 prefixes identical to the original Python store (golden test); never change the hashing.
+- `src/commands.ts` — `COMMANDS` table: tag, aliases, argument style, action contract. Single source of truth for
+  parsing, tool descriptions, the router prompt and the README table (drift test in `tests/docs.test.ts`).
+- `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Prompts in `src/prompts/*.md`.
+- `src/cli.ts` — login/sync/import-clippings/export/status/doctor/prompt/serve. `sync --on-pending CMD` is the trigger.
+- `skills/kindle-router/SKILL.md` — the router prompt as a Claude Code skill; generated from the same text.
 
 ## Rules
-- Never commit `.har`, `.db`, or `doctor-*.html`; they hold highlight text and session state.
+- Never commit `.har`, `.db`, `session.json`, or `doctor-*.html`; they hold highlight text and session state.
 - Fixtures must be scrubbed: placeholder text, account id replaced, cover URLs replaced.
 - When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, save a scrubbed fixture, fix selectors, add a test.
-- Keep the store and the MCP interface separate; the cron job and the server share one SQLite file.
+- Keep the store and the MCP interface separate; the cron job and the server share one SQLite file (WAL).
+- The server never assumes a runner or a sink. Routing behaviour lives in `COMMANDS` and the prompt text.
+- stdio servers must not write to stdout except through the transport; log to stderr.
 
-## Verified against live account (2026-09-21)
-19 books, 471 highlights. Library page, annotation pane, pagination (page 2+ is a bare fragment),
-notes (attached and freestanding), undisplayable highlights. Incremental sync skips unchanged books.
+## Verified
+- Python version, live account (2026-09-21): 19 books, 471 highlights; library page, annotation pane, pagination,
+  notes, undisplayable highlights, incremental sync.
+- TypeScript port (2026-09-22): same fixtures and golden ids; sync + cookie write-back + `--on-pending` hook, and
+  headless `login` + `sync --browser`, tested end to end against a local fixture server (browser tests need
+  `KINDLE_BROWSER_PATH` or Chrome/Edge, else they skip). The built stdio server passed a 72-check protocol pass
+  (all tools, edge cases, response cap, prompts with and without arguments, concurrency, shutdown), the MCP
+  Inspector CLI, and Claude Code 2.1 as a client, including `/mcp__kindle__kindle_route_pending todo true` running
+  the router in dry-run mode. Not yet verified live: the plain-HTTP path against the real site and cookie
+  lifetime. Run `kindle-mcp login`, `doctor`, then `sync` and expect `highlights_new: 0` on an existing store.
 
 ## Next
-1. Router agent for the @command queue (post/research/project/todo) — the differentiating piece.
-2. Short tag aliases (`@p`, `@r`) for Kindle typing.
-3. `kindle_get_themes(window)`; weekly digest.
-4. Try plain-HTTP sync with session cookies (HAR shows simple XHR GETs) to drop Playwright from the cron path.
+1. `kindle_get_themes(since)` for the weekly brief.
+2. Streamable HTTP transport behind a token, for web and mobile clients.
