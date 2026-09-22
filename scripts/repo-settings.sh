@@ -80,12 +80,13 @@ if [ "$PUBLIC" = "--public" ]; then
   api PATCH "" --input - >/dev/null <<'JSON'
 { "visibility": "public" }
 JSON
-  say "Secret scanning with push protection (needs a public repository)"
+  say "Secret scanning: push protection, non-provider patterns, validity checks (needs a public repository)"
   api PATCH "" --input - >/dev/null <<'JSON'
 { "security_and_analysis": {
     "secret_scanning": { "status": "enabled" },
     "secret_scanning_push_protection": { "status": "enabled" },
-    "secret_scanning_ai_detection": { "status": "enabled" } } }
+    "secret_scanning_non_provider_patterns": { "status": "enabled" },
+    "secret_scanning_validity_checks": { "status": "enabled" } } }
 JSON
 fi
 
@@ -94,5 +95,6 @@ gh api "repos/$REPO" --jq '{visibility, delete_branch_on_merge, has_wiki, has_pr
 gh api "repos/$REPO/rulesets" --jq '.[] | {name, enforcement}'
 gh api "repos/$REPO/actions/permissions/workflow"
 echo
-echo "Next: gh secret set NPM_TOKEN --repo $REPO   (paste the npm granular token when prompted)"
-echo "Then: gh workflow run publish.yml --repo $REPO -f version=\$(node -p \"require('./package.json').version\")"
+echo "Publishing uses npm trusted publishing: on npmjs.com, the package's Trusted Publisher setting names"
+echo "this repository and publish.yml. No token is needed. Release with:"
+echo "  gh workflow run publish.yml --repo $REPO -f version=\$(node -p \"require('./package.json').version\")"
