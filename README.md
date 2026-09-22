@@ -191,9 +191,11 @@ under `tests/fixtures`, fix `src/notebook/selectors.ts`, add a test. Never commi
 
 ## Releasing
 
-Bump `version` in `package.json`, merge, then `git tag v<version> && git push origin v<version>`.
-The `publish` workflow runs the tests, builds, checks the tag matches the version, and publishes
-`kindle-mcp-server` to npm with provenance. It needs an `NPM_TOKEN` repository secret.
+Bump `version` in `package.json` and merge. Then either run the `publish` workflow from the
+Actions tab, typing that version to confirm (it publishes and creates the `v<version>` tag), or
+push the tag yourself: `git tag v<version> && git push origin v<version>`. The workflow runs the
+tests, builds, refuses a version that is already on npm, and publishes `kindle-mcp-server` with
+provenance. It needs an `NPM_TOKEN` repository secret.
 
 ## Next layers (not built)
 

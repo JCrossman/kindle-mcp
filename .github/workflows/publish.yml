@@ -1,14 +1,24 @@
-# Publish to npm when a version tag is pushed: `git tag v0.2.0 && git push origin v0.2.0`.
-# The tag must match package.json's version. Needs an NPM_TOKEN repository secret (granular
-# access token with publish rights). After the first publish, npm's trusted publishing (OIDC)
-# can replace the token: configure it on the package's settings page at npmjs.com and drop
-# the NODE_AUTH_TOKEN line below.
+# Publish kindle-mcp-server to npm. Two ways to start it:
+#   - push a version tag:  git tag v1.0.0 && git push origin v1.0.0
+#   - run it from the Actions tab (workflow_dispatch), typing the version in package.json to
+#     confirm; the workflow then publishes and creates the v<version> tag itself.
+# Either way the version published is the one in package.json on the checked-out commit, a
+# version that is already on npm is refused, and the publish carries a provenance attestation.
+# Needs an NPM_TOKEN repository secret (granular access token with publish rights). After the
+# first publish, npm's trusted publishing (OIDC) can replace the token: configure it on the
+# package's settings page at npmjs.com and drop the NODE_AUTH_TOKEN line below.
 name: publish
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish; must equal the version in package.json (e.g. 1.0.0)"
+        required: true
+        type: string
 permissions:
-  contents: read
+  contents: write # create the tag on a manual run
   id-token: write # npm provenance attestation
 jobs:
   publish:
@@ -24,8 +34,29 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Tag must match package.json version
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - name: Read the version from package.json
+        id: pkg
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Tag must match package.json (tag push)
+        if: github.event_name == 'push'
+        run: test "v${{ steps.pkg.outputs.version }}" = "$GITHUB_REF_NAME"
+      - name: Typed version must match package.json (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: test "${{ inputs.version }}" = "${{ steps.pkg.outputs.version }}"
+      - name: Refuse a version that is already on npm
+        run: |
+          if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
+            echo "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }} is already published"; exit 1
+          fi
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Create and push the tag (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.pkg.outputs.version }}" -m "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}"
+          git push origin "v${{ steps.pkg.outputs.version }}"
