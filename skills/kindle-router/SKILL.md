@@ -26,13 +26,13 @@ unless a step says so.
 
 ## Commands
 
-| Tag | Alias | Argument | You mean | Router action |
+| Tag | Alias | Argument | Done by | Action while pending |
 |---|---|---|---|---|
-| `@post` | `@p` | none | I want to write about this. The rest of the note is the angle. | Draft a post angle: one claim, 2 to 4 quotes cited by book title and location (this highlight plus related ones from kindle_get_command_context), and the tension with something else the reader has read. 150 to 300 words. |
-| `@research` | `@r` | none | Go find out more about this. The rest of the note is the question. | Do the research. With web search available: find 3 to 5 sources, summarise them, say where they agree or disagree with the highlight, and include links. Always add the related highlights from the store. Without a web tool: write the three sharpest questions and state plainly that no research was performed. |
-| `@todo` | `@t` | rest of line, required | Make this a task. The argument is the task text. | Create the task with the quote, book title and location attached. Use the runner's task tool if it has one, otherwise append a checklist item to the Todo list. |
-| `@project` | `@pr` | one word, required | This belongs to project <name>. | Append the quote and note to that project's note. A missing project name goes to Unrouted with the reason. |
-| `@quote` | `@q` | none | Keep this as a quotable line. | File it with attribution (title, author, location). No commentary. |
+| `@post` | `@p` | none | you | Draft a post angle: one claim, 2 to 4 quotes cited by book title and location (this highlight plus related ones from kindle_get_command_context), and the tension with something else the reader has read. 150 to 300 words. Save it with kindle_complete_command (a short title, the draft as markdown). |
+| `@research` | `@r` | none | you | Do the research. With web search available: find 3 to 5 sources, summarise them, say where they agree or disagree with the highlight, and include links. Always add the related highlights from the store and link the related notes from kindle_get_command_context where they fit. Without a web tool: write the three sharpest questions and state plainly that no research was performed. Save it with kindle_complete_command. |
+| `@todo` | `@t` | rest of line, required | the sync, when a vault is set | Create the task with the quote, book title and location attached: kindle_complete_command files it in the vault's task list. Without a vault, use your own task tool or list it in your reply, then call kindle_mark_command_done. |
+| `@project` | `@pr` | one word, required | the sync, when a vault is set | Attach the quote and note to that project: kindle_complete_command appends it to the vault note named or aliased `<name>`, or creates one. A missing project name goes to Unrouted with the reason. Without a vault, put it in your reply, then call kindle_mark_command_done. |
+| `@quote` | `@q` | none | the sync, when a vault is set | File it with attribution (title, author, location), no commentary: kindle_complete_command adds it to the vault's quote list. Without a vault, put it in your reply, then call kindle_mark_command_done. |
 
 Unknown tags: file to `Unrouted.md` with the tag preserved. Never invent behaviour for a tag that is not in the table.
 

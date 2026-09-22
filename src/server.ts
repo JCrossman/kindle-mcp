@@ -18,7 +18,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { COMMANDS, commandsTable, type CommandWithAction } from "./commands.js";
+import { actionsTable, COMMANDS, type CommandWithAction } from "./commands.js";
 import { ensureDirs, type Config } from "./config.js";
 import { Store, type HighlightRow } from "./store.js";
 
@@ -98,7 +98,7 @@ function loadPrompt(name: string, vars: Record<string, string>): string {
 export function routePendingPrompt(tag?: string, dryRun = false): string {
   const t = tag?.trim().replace(/^@+/, "");
   return loadPrompt("route-pending", {
-    commands_table: commandsTable(),
+    commands_table: actionsTable(),
     tag_clause: t ? ` and \`tag\` = \`${t}\`` : "",
     dry_run_clause: dryRun
       ? "\n**DRY RUN.** List what you would do for each pending highlight. Write nothing anywhere and do not call `kindle_mark_command_done`.\n"

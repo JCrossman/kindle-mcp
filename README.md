@@ -64,13 +64,13 @@ or task tools) and otherwise puts drafts in its reply.
 
 Type these as a note on any highlight, on the Kindle:
 
-| Tag | Alias | Argument | You mean | Router action |
-|---|---|---|---|---|
-| `@post` | `@p` | none | I want to write about this. The rest of the note is the angle. | Draft a post angle: one claim, 2 to 4 quotes cited by book title and location (this highlight plus related ones from kindle_get_command_context), and the tension with something else the reader has read. 150 to 300 words. |
-| `@research` | `@r` | none | Go find out more about this. The rest of the note is the question. | Do the research. With web search available: find 3 to 5 sources, summarise them, say where they agree or disagree with the highlight, and include links. Always add the related highlights from the store. Without a web tool: write the three sharpest questions and state plainly that no research was performed. |
-| `@todo` | `@t` | rest of line, required | Make this a task. The argument is the task text. | Create the task with the quote, book title and location attached. Use the runner's task tool if it has one, otherwise append a checklist item to the Todo list. |
-| `@project` | `@pr` | one word, required | This belongs to project <name>. | Append the quote and note to that project's note. A missing project name goes to Unrouted with the reason. |
-| `@quote` | `@q` | none | Keep this as a quotable line. | File it with attribution (title, author, location). No commentary. |
+| Tag | Alias | Argument | You mean | Done by | What happens |
+|---|---|---|---|---|---|
+| `@post` | `@p` | none | I want to write about this. The rest of the note is the angle. | Claude | Claude drafts a post angle and saves it as a note in `Posts/`, linked to the highlight. |
+| `@research` | `@r` | none | Go find out more about this. The rest of the note is the question. | Claude | Claude researches it (web search when it has it) and saves a note with sources in `Research/`. |
+| `@todo` | `@t` | rest of line, required | Make this a task. The argument is the task text. | the sync | A checklist item in `Inbox/Todo.md` with the quote and a link to the highlight. |
+| `@project` | `@pr` | one word, required | This belongs to project `<name>`. | the sync | The quote and note under a `From Kindle` heading in your note named or aliased `<name>`, else in `Projects/<name>.md`. |
+| `@quote` | `@q` | none | Keep this as a quotable line. | the sync | The quote with title, author and location in `Inbox/Quotes.md`. |
 
 Unknown tags are kept and filed under Unrouted. A line argument stops at the next tag, so
 `@todo email Sam @project netcare` is two commands. Editing the note on the Kindle re-opens it.

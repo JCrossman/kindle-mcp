@@ -27,10 +27,16 @@ function tag(command: Command): string {
   return t;
 }
 
+/** What a highlight with no text means: usually not a clipping limit, whatever the old wording said. */
+export const TRUNCATED_TEXT =
+  "*(Amazon didn't return this text: usually an image or table, sometimes the publisher's copy limit. See the book at this location.)*";
+/** The 1.0 wording, still recognised in notes it wrote. */
+export const TRUNCATED_TEXT_V1 = "*(text withheld: publisher clipping limit)*";
+
 export function renderHighlight(h: HighlightRow): string {
   let where = h.location_start !== null ? `Location ${h.location_start}` : "";
   if (h.page) where = `Page ${h.page}` + (where ? ` · ${where}` : "");
-  const body = h.text || (h.truncated ? "*(text withheld: publisher clipping limit)*" : "");
+  const body = h.text || (h.truncated ? TRUNCATED_TEXT : "");
   const lines = body ? body.split(/\r\n|\r|\n/).map((ln) => `> ${ln}`) : [];
   if (h.note) lines.push(...(lines.length ? [">"] : []), "> **Note:** " + h.note.replace(/\n/g, " "));
   const tags = h.commands.map(tag).join(" ");
