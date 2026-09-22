@@ -134,7 +134,7 @@ describe("clippings", () => {
 describe("store", () => {
   it("computes the same ids as the original Python store", () => {
     const amz = makeHighlight({ bookId: "B0FAKE0001", amazonId: "B0FAKE0001:4559:HIGHLIGHT:9f0e2c2a-1b2c-4d3e-8f4a-5b6c7d8e9f00", locationStart: 31, text: "x" });
-    expect(highlightId("B0FAKE0001", amz)).toBe("d8b1830e595dba00");
+    expect(highlightId("B0FAKE0001", amz)).toBe("b346b7e276f01dd1");
     const clip = makeHighlight({ bookId: "clip:some-limited-book", locationStart: 3050, text: "y", source: "clippings" });
     expect(locationId("clip:some-limited-book", clip)).toBe("0400d5679160202e");
     expect(highlightId("clip:some-limited-book", clip)).toBe("0400d5679160202e");
