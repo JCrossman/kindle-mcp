@@ -4,7 +4,8 @@
 #     confirm; the workflow then publishes and creates the v<version> tag itself.
 # Either way the version published is the one in package.json on the checked-out commit, a
 # version that is already on npm is refused, and the publish carries a provenance attestation.
-# After publishing, the Claude Desktop bundle (.mcpb) is built and attached to a GitHub release.
+# The Claude Desktop bundle (.mcpb) is built and self-tested before the npm publish, then attached
+# to a GitHub release for the tag.
 # Authentication is npm trusted publishing (OIDC): no token or secret anywhere. The package's
 # settings on npmjs.com name this repository and this workflow file as its trusted publisher,
 # and `id-token: write` below lets the run prove it is that workflow.
@@ -51,6 +52,8 @@ jobs:
           if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
             echo "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }} is already published"; exit 1
           fi
+      - name: Build and self-test the Claude Desktop bundle (before anything is published)
+        run: node scripts/build-mcpb.mjs
       - run: npm install -g npm@latest # trusted publishing needs npm 11.5.1 or newer
       - run: npm publish --provenance --access public
       - name: Create and push the tag (manual run)
@@ -60,8 +63,6 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ steps.pkg.outputs.version }}" -m "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}"
           git push origin "v${{ steps.pkg.outputs.version }}"
-      - name: Build the Claude Desktop bundle
-        run: node scripts/build-mcpb.mjs
       - name: GitHub release with the bundle attached
         env:
           GH_TOKEN: ${{ github.token }}

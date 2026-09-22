@@ -1,7 +1,9 @@
 // Build the Claude Desktop bundle (.mcpb): a manifest generated from the live server, the compiled
-// code, the router skill, and production node_modules, packed with @anthropic-ai/mcpb.
+// code, the router skill, and production node_modules, packed with @anthropic-ai/mcpb. Then verify
+// the packed file itself: unpack it and replay a host handshake against its entry point, with and
+// without the host repeating the script path. Any failure fails the build.
 //   npm run build && node scripts/build-mcpb.mjs        -> kindle-mcp-server-<version>.mcpb
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,10 +51,11 @@ const manifest = {
   keywords: pkg.keywords,
   server: {
     type: "node",
-    entry_point: "dist/cli.js",
+    // Not dist/cli.js: the bundle entry serves unconditionally and ignores argv (see src/mcpb-entry.ts).
+    entry_point: "dist/mcpb-entry.js",
     mcp_config: {
       command: "node",
-      args: ["${__dirname}/dist/cli.js", "serve"],
+      args: ["${__dirname}/dist/mcpb-entry.js"],
       env: {
         KINDLE_MCP_HOME: "${user_config.kindle_home}",
         OBSIDIAN_VAULT: "${user_config.obsidian_vault}",
@@ -109,4 +112,57 @@ execFileSync(mcpb, ["validate", join(stage, "manifest.json")], { stdio: "inherit
 const out = join(root, `${pkg.name}-${pkg.version}.mcpb`);
 rmSync(out, { force: true });
 execFileSync(mcpb, ["pack", stage, out], { stdio: "inherit" });
+
+/** Speak MCP over stdio to a spawned server the way Claude Desktop does: discover probe first, then initialize. */
+function handshake(command, args, env) {
+  return new Promise((resolve) => {
+    const p = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env });
+    const got = {};
+    let out = "", err = "", exit = null;
+    const finish = () => {
+      try { p.kill(); } catch {}
+      resolve({
+        discover: got[1] ? (got[1].error ? `error ${got[1].error.code}` : "ok") : null,
+        server: got[2]?.result?.serverInfo ?? null,
+        tools: got[3]?.result?.tools?.length ?? 0,
+        prompts: got[4]?.result?.prompts?.length ?? 0,
+        exit,
+        stderr: err.split("\n").filter((l) => l.trim() && !/ExperimentalWarning|trace-warnings/.test(l)).slice(0, 3),
+      });
+    };
+    const timer = setTimeout(finish, 20000);
+    p.stdout.on("data", (d) => {
+      out += d;
+      const lines = out.split("\n");
+      out = lines.pop();
+      for (const line of lines) {
+        try { const m = JSON.parse(line); if (m.id !== undefined) got[m.id] = m; } catch { err += `non-JSON on stdout: ${line.slice(0, 80)}\n`; }
+      }
+      if (got[3] && got[4]) { clearTimeout(timer); finish(); }
+    });
+    p.stderr.on("data", (d) => (err += d));
+    p.on("exit", (code) => { exit = code; clearTimeout(timer); setTimeout(finish, 50); });
+    const send = (o) => { try { p.stdin.write(JSON.stringify(o) + "\n"); } catch {} };
+    send({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
+    send({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "mcpb-verify", version: "0" } } });
+    send({ jsonrpc: "2.0", method: "notifications/initialized" });
+    send({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
+    send({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} });
+  });
+}
+
+const verify = join(root, "build", "mcpb-verify");
+rmSync(verify, { recursive: true, force: true });
+execFileSync(mcpb, ["unpack", out, verify], { stdio: "ignore" });
+const packedManifest = JSON.parse(readFileSync(join(verify, "manifest.json"), "utf8"));
+const entry = join(verify, packedManifest.server.entry_point);
+const env = { ...process.env, KINDLE_MCP_HOME: join(root, "build", "mcpb-verify-home"), OBSIDIAN_VAULT: "${user_config.obsidian_vault}" };
+for (const [label, extra] of [["as the manifest says", []], ["host repeats the script path", [entry, "serve"]]]) {
+  const r = await handshake(process.execPath, [entry, ...extra], env);
+  const ok = r.discover && r.server?.version === pkg.version && r.tools === tools.length && r.prompts === prompts.length;
+  console.log(`self-test, ${label}: ${ok ? "ok" : "FAILED"} (${r.tools} tools, ${r.prompts} prompts, discover ${r.discover})`);
+  if (!ok) throw new Error(`bundle self-test failed (${label}): ${JSON.stringify(r)}`);
+}
+rmSync(verify, { recursive: true, force: true });
+rmSync(join(root, "build", "mcpb-verify-home"), { recursive: true, force: true });
 console.log(`\nbundle: ${out}`);
