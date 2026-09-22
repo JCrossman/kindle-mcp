@@ -197,6 +197,14 @@ push the tag yourself: `git tag v<version> && git push origin v<version>`. The w
 tests, builds, refuses a version that is already on npm, and publishes `kindle-mcp-server` with
 provenance. It needs an `NPM_TOKEN` repository secret.
 
+## Repository settings (maintainers)
+
+`scripts/repo-settings.sh OWNER/REPO [--public]` applies the security settings with the GitHub CLI:
+verified-only actions with a read-only token, Dependabot alerts and security updates, private
+vulnerability reporting, a ruleset on the default branch (pull requests required, threads resolved,
+CI green, no force pushes or deletions), and with `--public` the visibility change plus secret
+scanning with push protection. Run `gh auth login` first.
+
 ## Next layers (not built)
 
 - `kindle_get_themes(since)`: deterministic keyword clustering the weekly brief can lean on.
