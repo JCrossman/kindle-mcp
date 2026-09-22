@@ -3,6 +3,7 @@ import type { BrowserContext } from "playwright-core";
 
 import type { Config } from "../config.js";
 import type { Fetcher, FetchResult } from "./client.js";
+import { SIGNIN_URL_MARKERS } from "./selectors.js";
 import { applySetCookies, cookieHeader, loadSession, saveSession, type Session } from "./session.js";
 
 export interface FetcherHandle {
@@ -32,16 +33,28 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
   let dirty = false;
   return {
     async fetch(url: string): Promise<FetchResult> {
-      const res = await fetch(url, {
-        method: "GET",
-        redirect: "manual",
-        headers: { ...HEADERS, Cookie: cookieHeader(jar.cookies, url), Referer: `${cfg.notebookBase}/notebook` },
-      });
-      const setCookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
-      if (setCookies.length && applySetCookies(jar.cookies, setCookies, url)) dirty = true;
-      const location = res.headers.get("location");
-      const finalUrl = res.status >= 300 && res.status < 400 && location ? new URL(location, url).toString() : url;
-      return { status: res.status, finalUrl, html: res.status < 300 ? await res.text() : "" };
+      // Follow benign redirects ourselves so cookies travel with them; stop at a sign-in redirect
+      // so the client can report it. Redirects are handled here rather than by fetch() because
+      // fetch() would not re-read the jar for the new URL.
+      let current = url;
+      for (let hop = 0; hop < 5; hop++) {
+        const res = await fetch(current, {
+          method: "GET",
+          redirect: "manual",
+          headers: { ...HEADERS, Cookie: cookieHeader(jar.cookies, current), Referer: `${cfg.notebookBase}/notebook` },
+        });
+        const setCookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+        if (setCookies.length && applySetCookies(jar.cookies, setCookies, current)) dirty = true;
+        const location = res.headers.get("location");
+        if (res.status >= 300 && res.status < 400 && location) {
+          const next = new URL(location, current).toString();
+          if (SIGNIN_URL_MARKERS.some((m) => next.includes(m))) return { status: res.status, finalUrl: next, html: "" };
+          current = next;
+          continue;
+        }
+        return { status: res.status, finalUrl: current, html: res.status < 300 ? await res.text() : "" };
+      }
+      return { status: 310, finalUrl: current, html: "" }; // too many redirects
     },
     async close(): Promise<void> {
       if (dirty) saveSession(cfg.sessionPath, { ...jar, savedAt: new Date().toISOString() });

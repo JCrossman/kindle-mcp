@@ -15,11 +15,19 @@ const FX = join(__dirname, "fixtures");
 let server: Server;
 let base = "";
 const seenCookies: string[] = [];
+let redirects = 0;
 
 beforeAll(async () => {
   server = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     seenCookies.push(req.headers.cookie ?? "");
+    if (!url.searchParams.has("hop")) {
+      // A benign redirect (think trailing slash or regional host): the fetcher must follow it with cookies.
+      url.searchParams.set("hop", "1");
+      redirects++;
+      res.writeHead(301, { Location: url.pathname + url.search }).end();
+      return;
+    }
     if (!(req.headers.cookie ?? "").includes("session-id=abc")) {
       res.writeHead(302, { Location: "https://www.amazon.com/ap/signin" }).end();
       return;
@@ -59,6 +67,7 @@ describe("kindle-mcp CLI", () => {
     expect(await main(["sync", "--export", "--on-pending", hook(out)])).toBe(0);
     expect(readFileSync(out, "utf8")).toBe("1"); // one highlight carries @post @project
     expect(seenCookies.at(-1)).toContain("session-id=abc");
+    expect(redirects).toBeGreaterThan(0); // benign redirects are followed, not reported as sign-in
     expect(existsSync(join(home, "vault", "Kindle", "Thinking, Fast and Slow.md"))).toBe(true);
     const session = JSON.parse(readFileSync(cfg.sessionPath, "utf8"));
     expect(session.cookies.some((c: { name: string; value: string }) => c.name === "session-token" && c.value === "rotated")).toBe(true); // Set-Cookie written back
@@ -102,5 +111,24 @@ describe("kindle-mcp CLI", () => {
     expect(await main(["bogus"])).toBe(2);
     expect(await main(["--help"])).toBe(0);
     expect(await main([])).toBe(2);
+  });
+
+  it("prints the router prompts for any runner", async () => {
+    const chunks: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation(((chunk: string | Uint8Array) => {
+      chunks.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write);
+    try {
+      expect(await main(["prompt", "route-pending", "--tag", "todo", "--dry-run"])).toBe(0);
+      expect(chunks.join("")).toContain("`tag` = `todo`");
+      expect(chunks.join("")).toContain("DRY RUN");
+      chunks.length = 0;
+      expect(await main(["prompt", "weekly-brief", "--since", "30d"])).toBe(0);
+      expect(chunks.join("")).toContain("`30d`");
+      expect(await main(["prompt", "nope"])).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

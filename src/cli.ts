@@ -9,11 +9,14 @@
  *   kindle-mcp export [--book X]          write/append Obsidian notes
  *   kindle-mcp status                     counts, pending @commands, last run
  *   kindle-mcp doctor [--asin X|--book T] dump live HTML to debug selectors
+ *   kindle-mcp prompt NAME [--tag X]      print a router prompt (route-pending | weekly-brief) for any runner
+ *              [--dry-run] [--since 7d]
  *   kindle-mcp serve                      run the MCP server over stdio
  */
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { ensureDirs, loadConfig, type Config } from "./config.js";
@@ -35,6 +38,8 @@ const USAGE = `kindle-mcp <command> [options]
   export [--book X]                      write/append Obsidian notes (needs OBSIDIAN_VAULT)
   status                                 counts, pending @commands, last run
   doctor [--asin X | --book TITLE]       dump live HTML to ~/.kindle-mcp and report what the parser finds
+  prompt route-pending [--tag X] [--dry-run]
+  prompt weekly-brief [--since 7d]       print a router prompt, e.g. claude -p "$(kindle-mcp prompt route-pending)"
   serve                                  run the MCP server over stdio
 `;
 
@@ -45,10 +50,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     options: {
       full: { type: "boolean", default: false },
       book: { type: "string" },
+      tag: { type: "string" },
       asin: { type: "string" },
       browser: { type: "boolean", default: false },
       export: { type: "boolean", default: false },
       "on-pending": { type: "string" },
+      "dry-run": { type: "boolean", default: false },
+      since: { type: "string" },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -56,6 +64,18 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (values.help || !cmd) {
     process.stdout.write(USAGE);
     return values.help ? 0 : 2;
+  }
+
+  if (cmd === "prompt") {
+    const { routePendingPrompt, weeklyBriefPrompt } = await import("./server.js");
+    const which = positionals[1];
+    if (which === "route-pending") process.stdout.write(routePendingPrompt(values.tag, values["dry-run"]));
+    else if (which === "weekly-brief") process.stdout.write(weeklyBriefPrompt(values.since || "7d"));
+    else {
+      process.stderr.write("prompt needs a name: route-pending | weekly-brief\n");
+      return 2;
+    }
+    return 0;
   }
 
   const cfg = loadConfig();
@@ -151,8 +171,15 @@ async function exportNotes(cfg: Config, store: InstanceType<typeof import("./sto
   console.log(`Exported ${results.length} book(s), ${results.reduce((n, r) => n + r.added, 0)} new highlight(s).`);
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href;
-if (invokedDirectly) {
+function invokedDirectly(): boolean {
+  // Works through npm's bin symlinks and on Windows: compare real paths, not URLs.
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+if (invokedDirectly()) {
   main().then(
     (code) => process.exit(code),
     (e) => {
