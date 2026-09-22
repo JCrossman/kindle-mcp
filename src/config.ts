@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { normalizeFolder } from "./vault/write.js";
+
 export interface Config {
   home: string;
   dbPath: string;
@@ -17,6 +19,16 @@ export interface Config {
   onPending: string | null;
   /** Explicit browser executable for login/doctor/--browser (KINDLE_BROWSER_PATH); else Chrome, Edge, bundled Chromium. */
   browserPath: string | null;
+  /** After a sync, tell the agent to do pending @post/@research now rather than offer (KINDLE_ACT_ON_COMMANDS). */
+  actOnCommands: boolean;
+  /** File @todo, @quote and @project into the vault during sync (KINDLE_AUTO_FILE). */
+  autoFile: boolean;
+  /** Link mentions of vault notes in what is written (KINDLE_LINK_NOTES). */
+  linkNotes: boolean;
+  /** Vault folders never linked to or searched, on top of Obsidian's own exclusions (KINDLE_LINK_EXCLUDE). */
+  linkExclude: string[];
+  /** How long one kindle_sync call may spend before returning a partial result (KINDLE_SYNC_BUDGET_MS). */
+  syncBudgetMs: number;
 }
 
 /**
@@ -31,6 +43,14 @@ function setting(env: NodeJS.ProcessEnv, key: string, kind: "path" | "shell" = "
   if (/\$\{user_config\.[^}]*\}/.test(v)) return null;
   if (kind === "path" && /\$\{[^}]*\}/.test(v)) return null;
   return v;
+}
+
+/** A true/false setting; unset, placeholder or unrecognised values keep the default. */
+function flag(env: NodeJS.ProcessEnv, key: string, fallback: boolean): boolean {
+  const v = setting(env, key, "shell")?.toLowerCase();
+  if (v && /^(0|false|no|off)$/.test(v)) return false;
+  if (v && /^(1|true|yes|on)$/.test(v)) return true;
+  return fallback;
 }
 
 function expand(p: string): string {
@@ -49,10 +69,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionPath: join(home, "session.json"),
     notebookBase: (setting(env, "KINDLE_NOTEBOOK_BASE") ?? "https://read.amazon.com").replace(/\/+$/, ""),
     obsidianVault: vault ? expand(vault) : null,
-    obsidianFolder: setting(env, "OBSIDIAN_FOLDER") ?? "Kindle",
+    obsidianFolder: normalizeFolder(setting(env, "OBSIDIAN_FOLDER") ?? "Kindle"),
     requestDelayMs: Math.round((Number.isFinite(delay) ? delay : 1.5) * 1000),
     onPending: setting(env, "KINDLE_ON_PENDING", "shell"),
     browserPath: browser ? expand(browser) : null,
+    actOnCommands: flag(env, "KINDLE_ACT_ON_COMMANDS", true),
+    autoFile: flag(env, "KINDLE_AUTO_FILE", true),
+    linkNotes: flag(env, "KINDLE_LINK_NOTES", true),
+    linkExclude: (setting(env, "KINDLE_LINK_EXCLUDE", "shell") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    syncBudgetMs: Math.max(1, Number(setting(env, "KINDLE_SYNC_BUDGET_MS", "shell")) || 40_000),
   };
 }
 

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ const FX = join(__dirname, "fixtures");
 
 async function connected(): Promise<{ client: Client; home: string }> {
   const home = mkdtempSync(join(tmpdir(), "kindle-mcp-"));
+  mkdirSync(join(home, "vault"));
   const cfg = loadConfig({ KINDLE_MCP_HOME: home, OBSIDIAN_VAULT: join(home, "vault") });
   const store = new Store(cfg.dbPath);
   const [books] = parseLibrary(readFileSync(join(FX, "library.html"), "utf8"));
@@ -89,10 +90,10 @@ describe("MCP server", () => {
 
   it("exports to the configured vault", async () => {
     const { client, home } = await connected();
-    const res = (await call(client, "kindle_export_to_obsidian", {})).data;
-    expect(res.books).toBe(1);
-    expect(res.highlights_added).toBe(3);
-    expect(res.files[0].startsWith(join(home, "vault"))).toBe(true);
+    const res = (await call(client, "kindle_export_to_obsidian", {})).data.obsidian;
+    expect(res).toMatchObject({ books_written: 1, highlights_written: 3 });
+    expect(res.filed).toEqual([{ tag: "project", to: "Kindle/Projects/netcare.md", count: 1 }]);
+    expect(readFileSync(join(home, "vault", "Kindle", "Thinking, Fast and Slow.md"), "utf8")).toContain("^kh-");
   });
 
   it("renders the prompts with every command and the arguments", async () => {

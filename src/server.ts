@@ -335,21 +335,21 @@ export function createServer(cfg: Config): McpServer {
   server.registerTool(
     "kindle_export_to_obsidian",
     {
-      title: "Export to Obsidian",
-      description: "Write highlights into the Obsidian vault, one note per book. Append-only: existing edits are never overwritten.",
-      inputSchema: { book: z.string().optional().describe("Book id, ASIN or title fragment. Omit to export every book.") },
+      title: "Update the Obsidian vault",
+      description:
+        "Update the Obsidian vault from the local store without contacting Amazon: append new highlights to their " +
+        "book notes (with links to your notes), and file @todo, @quote and @project. kindle_sync does this too. " +
+        "Append-only: text you wrote is never overwritten. With `book`, also recreates that book's note if it was deleted.",
+      inputSchema: { book: z.string().optional().describe("Book id, ASIN or title fragment: recreate this book's note if it was deleted") },
       annotations: WRITE,
     },
     async ({ book }) =>
       withStoreAsync(async (store) => {
-        const { exportAll, exportBook } = await import("./obsidian.js");
-        if (!cfg.obsidianVault) return fail("OBSIDIAN_VAULT is not set in this server's environment.");
-        try {
-          const results = book ? [exportBook(store, book, cfg.obsidianVault, cfg.obsidianFolder)] : exportAll(store, cfg.obsidianVault, cfg.obsidianFolder);
-          return reply({ books: results.length, highlights_added: results.reduce((n, r) => n + r.added, 0), files: results.filter((r) => r.added).map((r) => r.file) });
-        } catch (e) {
-          return fail((e as Error).message);
-        }
+        if (!cfg.obsidianVault) return fail("No Obsidian vault is set. Set it in the extension settings (or OBSIDIAN_VAULT).");
+        if (book && !store.findBook(book)) return fail(`No book matches '${book}'. Call kindle_list_books to see titles.`);
+        const { runVaultStep } = await import("./vault/run.js");
+        const r = runVaultStep(cfg, store, { restoreBook: book ?? null, deadline: Date.now() + cfg.syncBudgetMs, offerLinkExisting: true });
+        return r.error ? fail(r.error) : reply({ obsidian: r });
       }),
   );
 

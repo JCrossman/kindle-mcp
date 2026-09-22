@@ -246,16 +246,19 @@ describe("obsidian export", () => {
     const store = new Store(tmpDb("obsidian"));
     const [bookId] = loadCloud(store);
     const vault = join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-vault-${process.pid}-${Date.now()}`);
+    expect(() => exportBook(store, bookId, vault)).toThrow(/does not exist/); // a mistyped vault grows no folders
+    require("node:fs").mkdirSync(vault);
     const first = exportBook(store, bookId, vault);
     expect(first.added).toBe(3);
-    const note = readFileSync(first.file, "utf8");
+    const file = join(vault, first.file);
+    const note = readFileSync(file, "utf8");
     expect(note).toContain("#kindle/project/netcare");
-    require("node:fs").writeFileSync(first.file, note + "\nMY OWN THOUGHTS\n"); // user edits in Obsidian
+    require("node:fs").writeFileSync(file, note + "\nMY OWN THOUGHTS\n"); // user edits in Obsidian
     importClippings(store, join(FX, "My Clippings.txt"), quiet);
     const second = exportBook(store, "thinking", vault); // title fragment lookup
     expect(second.added).toBe(0);
     expect(second.already_present).toBe(3);
-    expect(readFileSync(first.file, "utf8")).toContain("MY OWN THOUGHTS");
+    expect(readFileSync(file, "utf8")).toContain("MY OWN THOUGHTS");
     store.close();
   });
 });

@@ -1,5 +1,5 @@
 import { createServer as createHttpServer, type Server } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -50,6 +50,7 @@ function freshHome(): string {
   vi.stubEnv("KINDLE_MCP_HOME", home);
   vi.stubEnv("KINDLE_NOTEBOOK_BASE", base);
   vi.stubEnv("KINDLE_REQUEST_DELAY", "0");
+  mkdirSync(join(home, "vault"));
   vi.stubEnv("OBSIDIAN_VAULT", join(home, "vault"));
   vi.stubEnv("KINDLE_ON_PENDING", "");
   return home;
