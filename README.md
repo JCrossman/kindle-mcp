@@ -189,6 +189,12 @@ When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, save a scrubbe
 under `tests/fixtures`, fix `src/notebook/selectors.ts`, add a test. Never commit `.har`, `.db`,
 `session.json` or `doctor-*.html`: they hold highlight text and session state.
 
+## Releasing
+
+Bump `version` in `package.json`, merge, then `git tag v<version> && git push origin v<version>`.
+The `publish` workflow runs the tests, builds, checks the tag matches the version, and publishes
+`kindle-mcp-server` to npm with provenance. It needs an `NPM_TOKEN` repository secret.
+
 ## Next layers (not built)
 
 - `kindle_get_themes(since)`: deterministic keyword clustering the weekly brief can lean on.
