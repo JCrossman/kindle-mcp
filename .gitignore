@@ -12,3 +12,8 @@ build/
 *.db-wal
 *.db-shm
 doctor-*.html
+# Node
+node_modules/
+dist/
+# Amazon session cookies saved by `kindle-mcp login`
+session.json
