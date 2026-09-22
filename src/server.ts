@@ -3,6 +3,7 @@
  * createServer() is transport-free; serveStdio() wires it to stdio.
  */
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -22,7 +23,8 @@ import { ensureDirs, type Config } from "./config.js";
 import { Store, type HighlightRow } from "./store.js";
 
 export const CHAR_LIMIT = 25_000;
-export const SERVER_VERSION = "0.2.0";
+/** The package version, so the server reports what npm installed. */
+export const SERVER_VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
 const READ: ToolAnnotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE: ToolAnnotations = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };
