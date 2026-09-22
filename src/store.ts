@@ -625,7 +625,7 @@ export class Store {
   }
 }
 
-const STOPWORDS = new Set(
+export const STOPWORDS = new Set(
   ("that this with from have were they their there what when which while your about into than then them these " +
     "those been being because would could should also more most such only very just like over under after before " +
     "does done make made many much some same other others where here every each both between through during " +
