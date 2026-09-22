@@ -4,9 +4,9 @@
 #     confirm; the workflow then publishes and creates the v<version> tag itself.
 # Either way the version published is the one in package.json on the checked-out commit, a
 # version that is already on npm is refused, and the publish carries a provenance attestation.
-# Needs an NPM_TOKEN repository secret (granular access token with publish rights). After the
-# first publish, npm's trusted publishing (OIDC) can replace the token: configure it on the
-# package's settings page at npmjs.com and drop the NODE_AUTH_TOKEN line below.
+# Authentication is npm trusted publishing (OIDC): no token or secret anywhere. The package's
+# settings on npmjs.com name this repository and this workflow file as its trusted publisher,
+# and `id-token: write` below lets the run prove it is that workflow.
 name: publish
 on:
   push:
@@ -50,9 +50,8 @@ jobs:
           if npm view "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }}" version >/dev/null 2>&1; then
             echo "${{ steps.pkg.outputs.name }}@${{ steps.pkg.outputs.version }} is already published"; exit 1
           fi
+      - run: npm install -g npm@latest # trusted publishing needs npm 11.5.1 or newer
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Create and push the tag (manual run)
         if: github.event_name == 'workflow_dispatch'
         run: |

@@ -195,7 +195,7 @@ Bump `version` in `package.json` and merge. Then either run the `publish` workfl
 Actions tab, typing that version to confirm (it publishes and creates the `v<version>` tag), or
 push the tag yourself: `git tag v<version> && git push origin v<version>`. The workflow runs the
 tests, builds, refuses a version that is already on npm, and publishes `kindle-mcp-server` with
-provenance. It needs an `NPM_TOKEN` repository secret.
+provenance through npm trusted publishing, so no token is stored anywhere.
 
 ## Repository settings (maintainers)
 
@@ -204,7 +204,6 @@ your own machine with the GitHub CLI:
 
 ```bash
 gh auth login                                        # device-code flow in the browser
-gh secret set NPM_TOKEN --repo OWNER/REPO            # paste the npm granular token when prompted
 scripts/repo-settings.sh OWNER/REPO --public         # settings, then public + secret scanning
 ```
 
