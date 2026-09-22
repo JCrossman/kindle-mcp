@@ -265,6 +265,11 @@ export class Store {
     return row ? row.last_annotated : null;
   }
 
+  bookLastSynced(bookId: string): string | null {
+    const row = this.db.prepare("SELECT last_synced FROM books WHERE book_id=?").get(bookId) as { last_synced: string | null } | undefined;
+    return row ? row.last_synced : null;
+  }
+
   markBookSynced(bookId: string, lastAnnotated: string | null): void {
     this.db.prepare("UPDATE books SET last_annotated=?, last_synced=? WHERE book_id=?").run(lastAnnotated, nowIso(), bookId);
   }

@@ -44,11 +44,11 @@ describe("Desktop bundle entry", () => {
   it("serves with no arguments", async () => {
     const r = await handshake([]);
     expect(r.server?.name).toBe("kindle-mcp");
-    expect(r.tools).toBe(11);
+    expect(r.tools).toBe(14);
     expect(r.discover).toBe(-32601); // unknown probe methods get a JSON-RPC error, not a closed pipe
   }, 30_000);
   it("serves when the host repeats the script path and a subcommand", async () => {
     const r = await handshake([join(root, "dist", "mcpb-entry.js"), "serve"]);
-    expect(r.tools).toBe(11);
+    expect(r.tools).toBe(14);
   }, 30_000);
 });

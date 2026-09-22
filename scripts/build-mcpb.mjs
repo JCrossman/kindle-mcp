@@ -38,10 +38,11 @@ const manifest = {
   version: pkg.version,
   description: "Your Kindle highlights and notes as tools for Claude, plus a router for @commands you type on the Kindle.",
   long_description:
-    "Syncs read.amazon.com/notebook into a local SQLite store with full-text search, exposes it as MCP tools, " +
-    "and turns notes like `@post`, `@research` and `@todo` into drafts, research and tasks through the " +
-    "kindle_route_pending prompt. Sign in once with the kindle_login tool; your Amazon password is never seen " +
-    "or stored. Everything runs on this machine; nothing is sent anywhere but Amazon.",
+    "Syncs read.amazon.com/notebook into a local SQLite store with full-text search and exposes it as MCP tools. " +
+    "With an Obsidian vault, each sync adds new highlights to book notes linked to your own notes, files @todo, " +
+    "@quote and @project, and hands @post and @research to Claude, which saves them as linked notes. Sign in once " +
+    "with the kindle_login tool; your Amazon password is never seen or stored. Everything runs on this machine; " +
+    "nothing is sent anywhere but Amazon.",
   author: { name: "Jeremy Crossman", url: "https://github.com/JCrossman" },
   repository: { type: "git", url: "https://github.com/JCrossman/kindle-mcp" },
   homepage: "https://github.com/JCrossman/kindle-mcp",
@@ -61,6 +62,10 @@ const manifest = {
         OBSIDIAN_VAULT: "${user_config.obsidian_vault}",
         OBSIDIAN_FOLDER: "${user_config.obsidian_folder}",
         KINDLE_BROWSER_PATH: "${user_config.browser_path}",
+        KINDLE_ACT_ON_COMMANDS: "${user_config.act_on_commands}",
+        KINDLE_AUTO_FILE: "${user_config.auto_file}",
+        KINDLE_LINK_NOTES: "${user_config.link_notes}",
+        KINDLE_LINK_EXCLUDE: "${user_config.link_exclude}",
       },
     },
   },
@@ -79,7 +84,10 @@ const manifest = {
     obsidian_vault: {
       type: "directory",
       title: "Obsidian vault (optional)",
-      description: "If set, kindle_export_to_obsidian writes one note per book here and the router files its output under Inbox.",
+      description:
+        "If set, each sync adds new highlights to one note per book (linked to your notes), files @todo, @quote and " +
+        "@project, and Claude saves @post and @research as notes. Outside the Kindle folder, only notes you name with " +
+        "@project (and book notes you moved there) are written to.",
       required: false,
     },
     obsidian_folder: {
@@ -87,6 +95,34 @@ const manifest = {
       title: "Folder inside the vault",
       description: "Subfolder for the Kindle notes.",
       default: "Kindle",
+      required: false,
+    },
+    act_on_commands: {
+      type: "boolean",
+      title: "Do @commands after a sync",
+      description: "On: Claude carries out @post and @research as soon as a sync finds them. Off: it lists them and offers.",
+      default: true,
+      required: false,
+    },
+    auto_file: {
+      type: "boolean",
+      title: "File @todo, @quote and @project during sync",
+      description: "Off: leave them for Claude instead (for example to use your own task app).",
+      default: true,
+      required: false,
+    },
+    link_notes: {
+      type: "boolean",
+      title: "Link highlights to your notes",
+      description: "Mentions of your vault's note titles and aliases in new highlights and Claude's notes become [[links]].",
+      default: true,
+      required: false,
+    },
+    link_exclude: {
+      type: "string",
+      title: "Folders never linked or searched (optional)",
+      description: "Comma-separated vault folders, e.g. Journal, Private. Obsidian's own Excluded files are always honoured.",
+      default: "",
       required: false,
     },
     browser_path: {

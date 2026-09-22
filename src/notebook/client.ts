@@ -26,6 +26,14 @@ export class AuthRequired extends Error {
   }
 }
 
+/** The time budget ran out (or the caller cancelled) before the next request. */
+export class DeadlineReached extends Error {
+  constructor() {
+    super("Out of time for this sync; the next one continues where this stopped.");
+    this.name = "DeadlineReached";
+  }
+}
+
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export class NotebookClient {
@@ -33,9 +41,13 @@ export class NotebookClient {
     private readonly fetcher: Fetcher,
     private readonly base: string,
     private readonly delayMs: number,
+    /** Epoch ms after which no new request starts. */
+    private readonly deadline = Number.POSITIVE_INFINITY,
+    private readonly signal?: AbortSignal,
   ) {}
 
   private async get(url: string): Promise<string> {
+    if (Date.now() > this.deadline || this.signal?.aborted) throw new DeadlineReached();
     const res = await this.fetcher(url);
     if (S.SIGNIN_URL_MARKERS.some((m) => res.finalUrl.includes(m))) throw new AuthRequired();
     if (res.status >= 300 && res.status < 400) throw new AuthRequired(); // any other redirect means no notebook
