@@ -19,6 +19,10 @@ prompt -> optional Obsidian export. See README.md.
   parsing, tool descriptions, the router prompt and the README table (drift test in `tests/docs.test.ts`).
 - `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Prompts in `src/prompts/*.md`.
 - `src/cli.ts` — login/sync/import-clippings/export/status/doctor/prompt/serve. `sync --on-pending CMD` is the trigger.
+- `src/mcpb-entry.ts` — the Claude Desktop bundle's entry. Serves unconditionally and never reads argv: Desktop's
+  built-in Node runs it through its own wrapper and can repeat the script path. Keep it that way.
+- `scripts/build-mcpb.mjs` — builds the `.mcpb`, then unpacks the packed file and replays a host handshake against it
+  (plain and repeated-path argv). Runs in CI and in the publish workflow before anything is published.
 - `skills/kindle-router/SKILL.md` — the router prompt as a Claude Code skill; generated from the same text.
 
 ## Rules

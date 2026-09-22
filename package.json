@@ -1,6 +1,6 @@
 {
   "name": "kindle-mcp-server",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Kindle highlights and notes as an agent-readable store: sync from read.amazon.com, SQLite + FTS, MCP server, @command router.",
   "type": "module",
   "license": "MIT",

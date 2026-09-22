@@ -40,6 +40,8 @@ refuses that path, `kindle-mcp sync --browser` drives Chrome the way `login` doe
 Settings, Extensions). Set the optional Obsidian vault in the extension's settings. Then, in a chat,
 ask Claude to run `kindle_login`: a browser window opens for the one-time Amazon sign-in, and
 `kindle_sync` pulls your highlights. No terminal needed; Chrome or Edge must be installed.
+If the extension does not start, its own log is `mcp-server-Kindle highlights.log` in Claude's
+log folder (`~/Library/Logs/Claude` on macOS, `%APPDATA%\Claude\logs` on Windows).
 
 Claude Code:
 

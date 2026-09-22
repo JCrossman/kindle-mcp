@@ -20,14 +20,9 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { ensureDirs, loadConfig, type Config } from "./config.js";
+import { quietExperimentalWarnings } from "./warnings.js";
 
-// node:sqlite still emits an ExperimentalWarning on Node 22. Keep it out of cron logs and stdio.
-const emitWarning = process.emitWarning.bind(process);
-process.emitWarning = ((warning: string | Error, ...rest: unknown[]) => {
-  const type = typeof rest[0] === "string" ? rest[0] : (rest[0] as { type?: string } | undefined)?.type;
-  if (type === "ExperimentalWarning" || (warning as Error)?.name === "ExperimentalWarning") return;
-  (emitWarning as (...args: unknown[]) => void)(warning, ...rest);
-}) as typeof process.emitWarning;
+quietExperimentalWarnings();
 
 const USAGE = `kindle-mcp <command> [options]
 

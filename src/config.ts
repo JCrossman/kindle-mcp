@@ -19,24 +19,40 @@ export interface Config {
   browserPath: string | null;
 }
 
+/**
+ * A setting as the host passed it, or null when it is unset or still an unexpanded placeholder.
+ * MCP bundle hosts substitute `${user_config.x}` and `${HOME}`; a host that leaves an optional,
+ * unset one in place must not turn it into a folder literally named `${user_config.x}`. Shell
+ * commands keep their own `${VAR}` references, so only `${user_config.*}` counts there.
+ */
+function setting(env: NodeJS.ProcessEnv, key: string, kind: "path" | "shell" = "path"): string | null {
+  const v = env[key]?.trim();
+  if (!v) return null;
+  if (/\$\{user_config\.[^}]*\}/.test(v)) return null;
+  if (kind === "path" && /\$\{[^}]*\}/.test(v)) return null;
+  return v;
+}
+
 function expand(p: string): string {
   return resolve(p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const home = expand(env.KINDLE_MCP_HOME || join(homedir(), ".kindle-mcp"));
-  const vault = env.OBSIDIAN_VAULT;
+  const home = expand(setting(env, "KINDLE_MCP_HOME") ?? join(homedir(), ".kindle-mcp"));
+  const vault = setting(env, "OBSIDIAN_VAULT");
+  const browser = setting(env, "KINDLE_BROWSER_PATH");
+  const delay = parseFloat(setting(env, "KINDLE_REQUEST_DELAY") ?? "1.5");
   return {
     home,
-    dbPath: expand(env.KINDLE_MCP_DB || join(home, "kindle.db")),
+    dbPath: expand(setting(env, "KINDLE_MCP_DB") ?? join(home, "kindle.db")),
     browserProfile: join(home, "browser-profile"),
     sessionPath: join(home, "session.json"),
-    notebookBase: (env.KINDLE_NOTEBOOK_BASE || "https://read.amazon.com").replace(/\/+$/, ""),
+    notebookBase: (setting(env, "KINDLE_NOTEBOOK_BASE") ?? "https://read.amazon.com").replace(/\/+$/, ""),
     obsidianVault: vault ? expand(vault) : null,
-    obsidianFolder: env.OBSIDIAN_FOLDER || "Kindle",
-    requestDelayMs: Math.round(parseFloat(env.KINDLE_REQUEST_DELAY || "1.5") * 1000),
-    onPending: env.KINDLE_ON_PENDING || null,
-    browserPath: env.KINDLE_BROWSER_PATH ? expand(env.KINDLE_BROWSER_PATH) : null,
+    obsidianFolder: setting(env, "OBSIDIAN_FOLDER") ?? "Kindle",
+    requestDelayMs: Math.round((Number.isFinite(delay) ? delay : 1.5) * 1000),
+    onPending: setting(env, "KINDLE_ON_PENDING", "shell"),
+    browserPath: browser ? expand(browser) : null,
   };
 }
 
