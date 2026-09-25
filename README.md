@@ -17,22 +17,88 @@ My Clippings.txt (device, optional) ─────┘                 ├─►
 Everything runs on your machine. Nothing is sent anywhere except requests to Amazon for your own
 notebook. The command line needs Node 22.13 or newer; the Claude Desktop extension uses Claude's own.
 
-## Install
+## Setup
 
-**Claude Desktop, one click:** download `kindle-mcp-server-<version>.mcpb` from the
-[latest release](https://github.com/JCrossman/kindle-mcp/releases/latest) and open it (or drag it onto
-Settings, Extensions). In the extension's settings, point **Obsidian vault** at your vault if you use
-one. Then ask Claude "Sign me in to Kindle" and "Sync my Kindle highlights". Chrome or Edge must be
-installed for the one-time sign-in. If the extension does not start, its log is
-`mcp-server-Kindle highlights.log` in Claude's log folder (`~/Library/Logs/Claude` on macOS,
-`%APPDATA%\Claude\logs` on Windows).
+Pick one: the Claude Desktop extension (simplest), Claude Code, or the command line alone. They all
+keep their data in `~/.kindle-mcp`, so you can mix them.
 
-**Claude Code:**
+### Claude Desktop
 
-```bash
-npm install -g kindle-mcp-server
-claude mcp add --scope user kindle -e OBSIDIAN_VAULT="$HOME/path/to/vault" -- kindle-mcp serve
+1. You need Claude Desktop, and Google Chrome or Microsoft Edge for signing in to Amazon. If you
+   use Obsidian, back up your vault first: every sync adds to it.
+2. Download `kindle-mcp-server-<version>.mcpb` from the
+   [latest release](https://github.com/JCrossman/kindle-mcp/releases/latest), open it, and click
+   **Install** (or drag it onto Settings, Extensions).
+3. In Settings, Extensions, **Kindle highlights**, set **Obsidian vault** to your vault's top
+   folder if you use one. The other settings can stay as they are (see [Settings](#settings)).
+4. In a new chat, say "Sign me in to Kindle" and allow the tool. A Chrome window opens on Amazon's
+   sign-in page. Sign in (2FA included) and tick **Keep me signed in**: it lets later syncs renew
+   the sign-in without you. The window closes itself when your notebook loads. "Is my Kindle
+   connection working?" confirms it.
+5. Say "Sync my Kindle highlights" and allow the Kindle tools. The first sync of a big library
+   takes several calls; Claude keeps going by itself.
+6. If Claude asks whether to add links to highlights you exported before, answer it (see
+   [What lands in Obsidian](#what-lands-in-obsidian)).
+7. Try a command: on the Kindle, add the note `@todo try kindle-mcp` to any highlight. Once the
+   Kindle has synced (it needs Wi-Fi), sync again. The task is in `Kindle/Inbox/Todo.md`, linked
+   to the highlight.
+
+If the extension does not start, its log is `mcp-server-Kindle highlights.log` in Claude's log
+folder (`~/Library/Logs/Claude` on macOS, `%APPDATA%\Claude\logs` on Windows).
+
+### Sync on a schedule in Claude Desktop
+
+A local routine runs the sync for you, and with **Do @commands after a sync** on, it writes up your
+@post and @research notes too. Routines run only while Claude Desktop is open and the computer is
+awake.
+
+1. Make a new, empty folder for the routine, for example `Kindle Routine` in your home folder. A
+   routine is a Claude Code session, and Claude Code always works in a folder; the Kindle tools
+   don't use it. Don't pick your vault (Claude's own file tools would write in it directly,
+   outside kindle-mcp's append-only writes) or `~/.kindle-mcp` (it holds your Amazon session).
+2. In the **Code** tab, open **Routines**, click **New routine** and choose **Local**. Give it a
+   name and a description, paste the prompt below into **Instructions**, leave the permission
+   mode on **Manual**, select the folder from step 1, and leave **Worktree** off.
+3. Pick a schedule. Hourly costs Amazon almost nothing (an idle sync is two requests), but each
+   run is a Claude session that counts toward your plan's usage; Daily, or every few hours with
+   Custom, uses less.
+4. Click **Create**, then **Run now**, and answer each permission prompt with **Always allow** for
+   `kindle_sync`, `kindle_get_pending_commands`, `kindle_get_command_context`,
+   `kindle_complete_command`, `kindle_search_vault` and `kindle_status`, plus WebSearch and
+   WebFetch if you use @research. A scheduled run can't answer a prompt: it waits, and the runs
+   after it are skipped until you do. Don't always-allow `kindle_login` (it opens a window) or
+   `kindle_link_existing_highlights` (it changes older notes, which is your call).
+5. If that run can't find the Kindle tools, turn **Kindle highlights** on in a Code session's **+**
+   menu, under **Connectors**, or register the server for Claude Code (next section).
+6. Optional: Settings, Desktop app, General, **Keep computer awake**. A computer that sleeps
+   through a run skips it; when it wakes, Claude Desktop runs the latest missed one once.
+
+Each run shows a notification and a session under **Scheduled** in the sidebar. If the summary
+starts with "Kindle sign-in needed", say "Sign me in to Kindle" in any chat; the next run catches
+up. The prompt:
+
+```text
+Sync my Kindle highlights with kindle_sync. If the result says partial, call kindle_sync again
+until it's complete. Then carry out any pending @commands as the sync result instructs, saving
+each one with kindle_complete_command.
+
+This runs unattended: don't ask me anything and don't open the Amazon sign-in window. If the
+sync says I need to sign in, call kindle_get_pending_commands and still do anything waiting,
+then start the summary with "Kindle sign-in needed: say 'Sign me in to Kindle' when you're at
+your computer." If it offers to link older highlights, just mention it.
+
+Finish with a short summary: new highlights, what was filed where, the notes you wrote (by
+title), and anything that needs me.
 ```
+
+### Claude Code
+
+1. `npm install -g kindle-mcp-server` (Node 22.13 or newer).
+2. `claude mcp add --scope user kindle -e OBSIDIAN_VAULT="$HOME/path/to/vault" -- kindle-mcp serve`
+   (leave out `-e ...` if you don't use a vault).
+3. `kindle-mcp login`: a browser opens; sign in and tick **Keep me signed in**.
+4. In Claude Code, say "Sync my Kindle highlights". Slash commands and headless runs are under
+   [Example prompts](#example-prompts).
 
 **Claude Desktop from npm** instead of the extension (`claude_desktop_config.json`):
 
@@ -42,11 +108,11 @@ claude mcp add --scope user kindle -e OBSIDIAN_VAULT="$HOME/path/to/vault" -- ki
     "env": { "OBSIDIAN_VAULT": "/path/to/vault" } } } }
 ```
 
-**Command line only:**
+### Command line and cron
 
 ```bash
 npm install -g kindle-mcp-server     # or run every command below with `npx kindle-mcp-server`
-kindle-mcp login          # a browser opens; sign in to Amazon once (2FA included); cookies are saved
+kindle-mcp login          # a browser opens; sign in once (2FA included) and tick "Keep me signed in"
 kindle-mcp doctor         # check first: it should report your real book count
 kindle-mcp sync           # first run reads every book; later runs only changed books
 kindle-mcp status
@@ -58,6 +124,37 @@ kindle-mcp status
 `~/.kindle-mcp/session.json`, readable only by you. Your password is never seen or stored. Treat
 that file like a credential. `sync` is plain HTTP with those cookies; if Amazon ever refuses that,
 `kindle-mcp sync --browser` drives the browser instead.
+
+For cron or launchd, hourly is cheap. The sync files what it can; `--on-pending` starts Claude only
+when @post or @research is left:
+
+```cron
+30 * * * * PATH=/usr/local/bin:$PATH OBSIDIAN_VAULT="$HOME/path/to/vault" kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
+```
+
+Cron doesn't see the extension's settings, so the vault path goes in the line. Register the server
+for Claude Code first (`claude mcp add` above) so the headless run can see it. The hook gets
+`KINDLE_PENDING=<count>` in its environment. Windows: the same command in Task Scheduler with
+`cmd /c`.
+
+### Updating
+
+Download the new `.mcpb` and open it; Claude Desktop replaces the old version (check its settings
+afterwards). For Claude Code and cron: `npm install -g kindle-mcp-server@latest`. Keep both on the
+same version, since they share `~/.kindle-mcp`.
+
+### If it keeps asking you to sign in
+
+The sync reuses the sign-in you saved. When Amazon stops accepting it, the sync renews it in a
+hidden browser window from the browser you signed in with, then carries on (the result says
+`session_refreshed: true`). That works while Amazon remembers that browser, which is what **Keep
+me signed in** is for. When Amazon wants your password again, the sync says so:
+
+- Say "Sign me in to Kindle" (or run `kindle-mcp login`) and tick **Keep me signed in**. Without
+  it, Amazon forgets the browser when the sign-in window closes, and every sync needs you.
+- "Is my Kindle connection working?" shows the data folder, the version, and when you last signed
+  in. If a chat syncs and a routine doesn't, the two are using different data folders or versions.
+- Nothing is lost while you're signed out: reads work from the store, and the next sync catches up.
 
 ## Notes as commands
 
@@ -183,27 +280,6 @@ highlights to my notes"), or run `kindle-mcp link-existing` to preview and add `
 - `/mcp__kindle__kindle_weekly_brief 14d`
 - `claude -p "$(kindle-mcp prompt route-pending)"`: the same, headless.
 
-## Automation
-
-The server never runs on its own; something has to call it. Pick one:
-
-**A Claude Desktop scheduled task:** create a task whose prompt is simply "Sync my Kindle
-highlights". It runs while the app is open, and with **Do @commands after a sync** on it writes up
-your @post and @research notes too.
-
-**cron or launchd:** hourly is cheap (an idle sync is two requests). The sync files what it can;
-`--on-pending` starts Claude only when @post or @research is left.
-
-```cron
-30 * * * * PATH=/usr/local/bin:$PATH OBSIDIAN_VAULT="$HOME/path/to/vault" kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
-```
-
-Cron doesn't see the extension's settings, so the vault path goes in the line. Register the server
-for Claude Code first (`claude mcp add` above) so the headless run can see it. The hook gets
-`KINDLE_PENDING=<count>` in its environment. Windows: the same command in Task Scheduler with
-`cmd /c`. The scheduled job and Desktop share `~/.kindle-mcp`; keep both on the same version
-(`npm install -g kindle-mcp-server@latest` after updating the extension).
-
 ## MCP tools
 
 | Tool | What it does |
@@ -264,12 +340,14 @@ variables.
 
 - Automated access may conflict with Amazon's terms of use. This reads only your own data, at low
   volume, with a delay between pages. Your call.
-- How long the saved cookies stay valid is not known yet. When they expire, `sync` says so and
-  reads keep working from the store; sign in again with `kindle-mcp login` or the `kindle_login` tool.
+- How long Amazon remembers a browser is up to Amazon. The sync renews a stale sign-in by itself
+  while it does, and says when it needs you (see
+  [If it keeps asking you to sign in](#if-it-keeps-asking-you-to-sign-in)). The renewal uses a
+  headless browser; if Amazon ever refuses that, signing in again still works.
 - "Do @commands after a sync" is an instruction to Claude, not a guarantee. Claude Desktop still asks
   your permission the first time each tool runs, and @research only searches the web when web search
   is on.
-- The server can't wake Claude by itself. Commands are done when you, a scheduled task, or cron runs
+- The server can't wake Claude by itself. Commands are done when you, a routine, or cron runs
   a sync through Claude.
 - `first_seen` is when the sync first saw a highlight, not when you made it; the cloud page does not
   expose per-highlight times (clippings does).

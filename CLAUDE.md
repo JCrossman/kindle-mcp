@@ -1,9 +1,9 @@
 # kindle-mcp
 
 Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked.
-Sync engine (fetch + saved cookies, Playwright only for login) -> SQLite + FTS -> MCP server over stdio
-(14 tools, 2 prompts). With a vault, each sync appends new highlights to book notes linked to the user's notes,
-files @todo/@quote/@project itself, and hands @post/@research to the agent, which saves them with
+Sync engine (fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP
+server over stdio (14 tools, 2 prompts). With a vault, each sync appends new highlights to book notes linked to the
+user's notes, files @todo/@quote/@project itself, and hands @post/@research to the agent, which saves them with
 `kindle_complete_command`. See README.md.
 
 ## Setup
@@ -14,7 +14,8 @@ files @todo/@quote/@project itself, and hands @post/@research to the agent, whic
 - `src/notebook/selectors.ts` — every DOM assumption about Amazon's page. Change here first when a sync breaks.
 - `src/notebook/parser.ts` — pure HTML -> models (cheerio); unit-tested. `client.ts` — pagination, sign-in
   detection and the per-call deadline over a `Fetcher`. `fetchers.ts` — cookie fetcher (cron path) and browser
-  fetcher (fallback). `login.ts` — headed Chrome once, saves `session.json`. `session.ts` — cookie jar.
+  fetcher (fallback). `login.ts` — headed Chrome once, saves `session.json`; `refreshSession` renews a stale sign-in
+  headless from the same profile (sync retries once with it). `session.ts` — cookie jar.
 - `src/store.ts` — node:sqlite. Cloud highlights keyed by Amazon annotation id; clippings merge by (book, location).
   Ids are sha1 prefixes identical to the original Python store (golden test); never change the hashing.
   `commands_done_at` is the highlight-level truth (1.0 code writes only that); `command_outputs` records finished
@@ -65,6 +66,11 @@ files @todo/@quote/@project itself, and hands @post/@research to the agent, whic
   the packed bundle's handshake (14 tools); headless Claude Code told only "Sync my Kindle highlights" saving the
   @post through `kindle_complete_command` unasked, and only offering with `KINDLE_ACT_ON_COMMANDS=false`. Not yet
   checked inside Obsidian itself (hover previews, Tasks plugin) or live against Amazon with 1.1.0.
+- 1.1.1 (2026-09-25), against local stand-ins: live use showed every routine run asking to sign in again. A stale
+  saved sign-in is now renewed from the saved browser profile by headless Chromium, and reported as expired once
+  the stand-in forgets the browser; a signed-out `kindle_sync` still files and returns the queue; headless Claude
+  Code with the README's routine prompt and a stale sign-in wrote the waiting @post and never called
+  `kindle_login`. Not yet checked live: that Amazon renews a remembered browser's sign-in headless.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.

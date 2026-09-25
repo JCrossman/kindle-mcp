@@ -16,12 +16,42 @@ export interface FetchResult {
 
 export type Fetcher = (url: string) => Promise<FetchResult>;
 
+/** Why a sync needs the user: nothing saved yet, or Amazon wants the password again. */
+export type SignInReason = "missing" | "expired";
+
+export interface SignInDetail {
+  /** The data folder that was searched for a saved sign-in. */
+  home?: string;
+  /** When the saved sign-in was made or last renewed (ISO). */
+  savedAt?: string;
+}
+
+function localTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function signInMessage(reason: SignInReason, detail: SignInDetail): string {
+  const how = 'In Claude, say "Sign me in to Kindle"; on the command line, run `kindle-mcp login`.';
+  if (reason === "missing") {
+    return `No Amazon sign-in is saved yet${detail.home ? ` (looked in ${detail.home})` : ""}. ${how} Then sync again.`;
+  }
+  const when = detail.savedAt ? ` (the saved sign-in is from ${localTime(detail.savedAt)})` : "";
+  return (
+    `Amazon wants you to sign in again${when}, and the sign-in couldn't be renewed without you. In Claude, say ` +
+    '"Sign me in to Kindle" and tick "Keep me signed in"; on the command line, run `kindle-mcp login`. Nothing is ' +
+    "lost: the next sync catches up."
+  );
+}
+
 export class AuthRequired extends Error {
-  constructor() {
-    super(
-      "Amazon session missing or expired. Run `kindle-mcp login` in a terminal, sign in in the " +
-        "browser window that opens, then retry the sync.",
-    );
+  constructor(
+    readonly reason: SignInReason = "expired",
+    detail: SignInDetail = {},
+  ) {
+    super(signInMessage(reason, detail));
     this.name = "AuthRequired";
   }
 }
