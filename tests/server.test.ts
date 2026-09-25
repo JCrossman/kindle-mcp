@@ -242,6 +242,36 @@ describe("MCP server", () => {
     expect(second.books_synced).toBeGreaterThan(0);
   });
 
+  it("still updates the vault and hands over the queue when Amazon needs a sign-in, and says what to do", async () => {
+    const { client, home } = await connected(); // nothing saved yet
+    let res = await call(client, "kindle_sync");
+    expect(res.isError).toBe(true);
+    expect(res.data.needs_human).toBe(true);
+    expect(res.data.error).toContain(`No Amazon sign-in is saved yet (looked in ${home})`);
+    expect(res.data.next).toMatch(/If they are in this conversation, offer to open the sign-in window with kindle_login/);
+    expect(res.data.next).toMatch(/In a scheduled or unattended run, don't call kindle_login/);
+    expect(res.data.obsidian.filed).toEqual([{ tag: "project", to: "Kindle/Projects/netcare.md", count: 1 }]);
+    expect(res.data.pending).toMatchObject({ count: 1, act_now: true, instruction: expect.stringContaining("kindle_complete_command") });
+    expect(existsSync(join(home, "vault", "Kindle", "Thinking, Fast and Slow.md"))).toBe(true);
+    let status = (await call(client, "kindle_status")).data;
+    expect(status).toMatchObject({ session_saved: false, data_folder: home, version: expect.stringMatching(/^\d+\.\d+\.\d+/) });
+    expect(status.signed_in_at).toBeUndefined();
+    expect(status.next_step).toMatch(/not in a scheduled run/);
+
+    // Saved but refused, and no browser profile to renew it from.
+    saveSession(join(home, "session.json"), {
+      savedAt: "2026-09-21T08:00:00.000Z",
+      signedInAt: "2026-09-19T08:00:00.000Z",
+      cookies: [{ name: "session-id", value: "stale", domain: "127.0.0.1", path: "/", expires: -1 }],
+    });
+    res = await call(client, "kindle_sync");
+    expect(res.data.error).toMatch(/^Amazon wants you to sign in again \(the saved sign-in is from 2026-09-1[89] /);
+    expect(res.data.error).toContain('tick "Keep me signed in"');
+    expect(res.data.pending.count).toBe(1);
+    status = (await call(client, "kindle_status")).data;
+    expect(status).toMatchObject({ session_saved: true, session_saved_at: "2026-09-21T08:00:00.000Z", signed_in_at: "2026-09-19T08:00:00.000Z" });
+  });
+
   it("parses since spans and dates", () => {
     expect(parseSince("2026-09-01")).toBe("2026-09-01T00:00:00Z");
     expect(parseSince("2026-09-01T10:00:00+02:00")).toBe("2026-09-01T08:00:00Z");

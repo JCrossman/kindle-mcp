@@ -14,6 +14,8 @@ export interface Cookie {
 
 export interface Session {
   savedAt: string;
+  /** When a browser last signed in or renewed the sign-in. Files from before 1.1.1 lack it. */
+  signedInAt?: string;
   cookies: Cookie[];
 }
 

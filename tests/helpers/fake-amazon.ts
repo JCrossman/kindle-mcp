@@ -26,7 +26,8 @@ export async function startFakeAmazon(): Promise<FakeAmazon> {
       return;
     }
     if (!(req.headers.cookie ?? "").includes("session-id=abc")) {
-      res.writeHead(302, { Location: "https://www.amazon.com/ap/signin" }).end();
+      // Like Amazon, the sign-in redirect also clears the refused cookie.
+      res.writeHead(302, { Location: "https://www.amazon.com/ap/signin", "Set-Cookie": "session-id=; Max-Age=0; Path=/" }).end();
       return;
     }
     const asin = url.searchParams.get("asin");

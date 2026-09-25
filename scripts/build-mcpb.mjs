@@ -128,7 +128,7 @@ const manifest = {
     browser_path: {
       type: "file",
       title: "Browser executable (optional)",
-      description: "Only if neither Chrome nor Edge is installed: any Chromium-based browser, used for the one-time sign-in.",
+      description: "Only if neither Chrome nor Edge is installed: any Chromium-based browser, used to sign in to Amazon and to renew the sign-in.",
       required: false,
     },
   },

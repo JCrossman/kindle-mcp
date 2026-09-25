@@ -5,7 +5,7 @@
  * Claude Desktop does not pass server instructions to the model, so everything a client must
  * know to act (the @command flow, what `truncated` means) is in tool descriptions and results.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,6 +23,7 @@ import { z } from "zod";
 
 import { actionsTable, COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, type CommandWithAction } from "./commands.js";
 import { ensureDirs, type Config } from "./config.js";
+import { loadSession } from "./notebook/session.js";
 import { Store, type HighlightRow } from "./store.js";
 
 export const CHAR_LIMIT = 25_000;
@@ -235,6 +236,12 @@ function registerPrompts(server: McpServer): void {
 let loginInProgress = false;
 
 const NO_VAULT = "No Obsidian vault is set. Set it in the extension's settings (or OBSIDIAN_VAULT) to save notes there.";
+
+/** What to do when Amazon needs the user, in a conversation or in a run nobody is watching. */
+const SIGN_IN_NEXT =
+  "The user has to sign in to Amazon. If they are in this conversation, offer to open the sign-in window with " +
+  "kindle_login (they should tick \"Keep me signed in\"). In a scheduled or unattended run, don't call kindle_login: " +
+  "do the pending commands as instructed, and tell the user to say \"Sign me in to Kindle\" when they're back.";
 
 export function createServer(cfg: Config): McpServer {
   const server = new McpServer({ name: "kindle-mcp", version: SERVER_VERSION }, { instructions: serverInstructions() });
@@ -632,7 +639,8 @@ export function createServer(cfg: Config): McpServer {
         "Obsidian vault set, it then appends new highlights to their book notes with links to the user's notes and " +
         "files @todo, @quote and @project. The result's `pending` lists the @commands left for you with an " +
         "`instruction`: follow it (it says whether to do them now or offer). `partial: true` means call kindle_sync " +
-        "again for the rest. If `link_existing` is present, ask the user its question.",
+        "again for the rest. If `link_existing` is present, ask the user its question. If Amazon needs the user to " +
+        "sign in, the result says so (`needs_human`) and still carries `pending`: follow its `next`.",
       inputSchema: {
         full: z.boolean().default(false).describe("Re-read every book instead of only books annotated since last sync"),
         book: z.string().optional().describe("Limit the sync to one title fragment or ASIN"),
@@ -646,14 +654,15 @@ export function createServer(cfg: Config): McpServer {
         const { syncCloud } = await import("./sync.js");
         const deadline = Date.now() + cfg.syncBudgetMs;
         let stats;
+        let signIn: string | null = null;
         try {
           stats = await syncCloud(cfg, store, { full, only: book ?? null, browser, log: () => {}, deadline, signal: extra.signal });
         } catch (e) {
-          if (e instanceof AuthRequired) return fail(e.message, { needs_human: true, next: "Call kindle_login so the user can sign in again." });
-          return fail(`Sync failed: ${(e as Error).message}`);
+          if (!(e instanceof AuthRequired)) return fail(`Sync failed: ${(e as Error).message}`);
+          signIn = e.message; // the vault step and the queue need no Amazon, so they still run
         }
         const payload: Json = { ...stats };
-        if (stats.partial) {
+        if (stats?.partial) {
           const left = stats.books_remaining ? ` the remaining ${stats.books_remaining} book(s)` : " the rest";
           payload.next = `Out of time for this call: call kindle_sync again to fetch${left}.`;
         }
@@ -666,6 +675,7 @@ export function createServer(cfg: Config): McpServer {
           if (link_existing) payload.link_existing = link_existing;
         }
         payload.pending = pendingSummary(cfg, store, vaultReady);
+        if (signIn) return fail(signIn, { needs_human: true, next: SIGN_IN_NEXT, ...payload });
         return reply(payload);
       }),
   );
@@ -676,13 +686,15 @@ export function createServer(cfg: Config): McpServer {
       title: "Store status",
       description:
         "Store counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon " +
-        "session is saved, the Obsidian vault and settings in effect, and a `next_step` suggestion.",
+        "session is saved and when, the data folder and version, the Obsidian vault and settings in effect, and a " +
+        "`next_step` suggestion.",
       annotations: READ,
     },
     async () =>
       withStoreAsync(async (store) => {
         const s = store.status();
-        const session = existsSync(cfg.sessionPath);
+        const saved = loadSession(cfg.sessionPath);
+        const session = saved !== null;
         let linkExisting: string | undefined;
         if (cfg.obsidianVault) {
           try {
@@ -694,7 +706,7 @@ export function createServer(cfg: Config): McpServer {
           }
         }
         const next = !session
-          ? "Call kindle_login so the user can sign in to Amazon, then kindle_sync."
+          ? "The user isn't signed in to Amazon yet: offer kindle_login (it opens a sign-in window; not in a scheduled run), then kindle_sync."
           : !s.highlights
             ? "Call kindle_sync to pull the user's highlights."
             : s.pending_commands
@@ -705,7 +717,10 @@ export function createServer(cfg: Config): McpServer {
         return reply({
           ...s,
           session_saved: session,
+          ...(saved ? { session_saved_at: saved.savedAt, ...(saved.signedInAt ? { signed_in_at: saved.signedInAt } : {}) } : {}),
           login_in_progress: loginInProgress,
+          data_folder: cfg.home,
+          version: SERVER_VERSION,
           obsidian_vault: cfg.obsidianVault,
           obsidian_folder: cfg.obsidianFolder,
           ...(linkExisting ? { link_existing: linkExisting } : {}),
@@ -744,8 +759,9 @@ export function createServer(cfg: Config): McpServer {
         return reply({
           ok: true,
           message:
-            "A browser window opened on this machine. Sign in to Amazon there; the session is saved automatically when " +
-            "your Kindle notebook loads. Then call kindle_status (session_saved: true) and kindle_sync.",
+            "A browser window opened on this machine. Sign in to Amazon there and tick \"Keep me signed in\" (it lets " +
+            "later syncs renew the sign-in without you); the session is saved and the window closes when your Kindle " +
+            "notebook loads. Then call kindle_status (session_saved: true) and kindle_sync.",
         });
       } catch (e) {
         return fail((e as Error).message);

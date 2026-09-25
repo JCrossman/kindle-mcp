@@ -28,13 +28,18 @@ describe("docs stay in sync with COMMANDS", () => {
     expect(body).toBe(routePendingPrompt());
     expect(skill.startsWith("---\nname: kindle-router\n")).toBe(true);
   });
-  it("README names every tool the server offers and every setting it reads", async () => {
+  it("README names every tool the server offers, no tool it lacks, and every setting it reads", async () => {
     const readme = readFileSync(join(root, "README.md"), "utf8");
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await createServer(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) })).connect(serverT);
     const client = new Client({ name: "docs", version: "0" });
     await client.connect(clientT);
-    for (const t of (await client.listTools()).tools) expect(readme).toContain(`\`${t.name}\``);
+    const tools = (await client.listTools()).tools.map((t) => t.name);
+    for (const t of tools) expect(readme).toContain(`\`${t}\``);
+    // And the other way round: a renamed tool must not leave the routine prompt or a table behind.
+    const known = [...tools, ...(await client.listPrompts()).prompts.map((p) => p.name)];
+    const shipped = readme.split("\n## Next\n")[0]; // Next names tools that don't exist yet
+    for (const [name] of shipped.matchAll(/\bkindle_[a-z_]+\b/g)) expect(known).toContain(name);
     const config = readFileSync(join(root, "src", "config.ts"), "utf8");
     for (const [, key] of config.matchAll(/(?:setting|flag)\(env, "([A-Z_]+)"/g)) expect(readme).toContain(`\`${key}\``);
     await client.close();

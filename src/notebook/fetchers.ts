@@ -31,6 +31,9 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
   }
   const jar = session;
   let dirty = false;
+  // A reply that sends us to sign-in may also clear cookies; saving those would only make the
+  // saved session worse for the next attempt.
+  let signedOut = false;
   return {
     async fetch(url: string): Promise<FetchResult> {
       // Follow benign redirects ourselves so cookies travel with them; stop at a sign-in redirect
@@ -48,7 +51,10 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
         const location = res.headers.get("location");
         if (res.status >= 300 && res.status < 400 && location) {
           const next = new URL(location, current).toString();
-          if (SIGNIN_URL_MARKERS.some((m) => next.includes(m))) return { status: res.status, finalUrl: next, html: "" };
+          if (SIGNIN_URL_MARKERS.some((m) => next.includes(m))) {
+            signedOut = true;
+            return { status: res.status, finalUrl: next, html: "" };
+          }
           current = next;
           continue;
         }
@@ -57,7 +63,7 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
       return { status: 310, finalUrl: current, html: "" }; // too many redirects
     },
     async close(): Promise<void> {
-      if (dirty) saveSession(cfg.sessionPath, { ...jar, savedAt: new Date().toISOString() });
+      if (dirty && !signedOut) saveSession(cfg.sessionPath, { ...jar, savedAt: new Date().toISOString() });
     },
   };
 }

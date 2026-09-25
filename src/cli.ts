@@ -93,7 +93,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
   if (cmd === "login") {
     const { login } = await import("./notebook/login.js");
-    console.log("A browser window will open. Sign in to Amazon; this window closes itself when your notebook loads.");
+    console.log(
+      'A browser window will open. Sign in to Amazon and tick "Keep me signed in" (it lets later syncs renew the ' +
+        "sign-in without you); the window closes itself when your notebook loads.",
+    );
     const ok = await login(cfg);
     console.log(ok ? `Logged in. Session saved to ${cfg.sessionPath}.` : "Timed out waiting for login.");
     return ok ? 0 : 1;
@@ -105,8 +108,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   try {
     if (cmd === "sync") {
       const { syncCloud } = await import("./sync.js");
-      const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser });
-      console.log(JSON.stringify(stats));
+      const { AuthRequired } = await import("./notebook/client.js");
+      let signIn: string | null = null;
+      try {
+        const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser });
+        console.log(JSON.stringify(stats));
+      } catch (e) {
+        if (!(e instanceof AuthRequired)) throw e;
+        signIn = e.message; // the vault and the queue need no Amazon: finish those, then report it
+      }
       if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
       const hook = values["on-pending"] ?? cfg.onPending;
       const pending = store.status().pending_commands;
@@ -117,6 +127,10 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
           console.error(`ERROR: --on-pending command exited with ${res.status ?? "signal"}`);
           return res.status ?? 1;
         }
+      }
+      if (signIn) {
+        console.error(`ERROR: ${signIn}`);
+        return 1;
       }
     } else if (cmd === "import-clippings") {
       if (!positionals[1]) throw new Error("import-clippings needs the path to My Clippings.txt");
