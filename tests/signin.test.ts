@@ -2,7 +2,8 @@
  * A refused sign-in: renewed once without the user when possible, otherwise reported with what
  * to do. The browser renewal itself is stubbed here; tests/browser.test.ts runs the real one.
  */
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,17 +15,40 @@ import { Store } from "../src/store.js";
 import { syncCloud } from "../src/sync.js";
 import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
 
+const FX = join(__dirname, "fixtures");
+
 let amazon: FakeAmazon;
+/** Lists the library for any saved cookie, but serves a book's pages only to session-id=abc. */
+let picky: Server;
+let pickyBase = "";
 beforeAll(async () => {
   amazon = await startFakeAmazon();
+  picky = createServer((req, res) => {
+    const asin = new URL(req.url ?? "/", "http://localhost").searchParams.get("asin");
+    const cookies = req.headers.cookie ?? "";
+    if (!cookies.includes("session-id=") || (asin && !cookies.includes("session-id=abc"))) {
+      res.writeHead(302, { Location: "/ap/signin" }).end();
+      return;
+    }
+    const body = asin === "B0FAKE0004" ? readFileSync(join(FX, "annotations.html"))
+      : asin ? '<html><body><input type="hidden" class="kp-notebook-annotations-next-page-start" value=""></body></html>'
+      : readFileSync(join(FX, "library.html"));
+    res.writeHead(200, { "Content-Type": "text/html" }).end(body);
+  });
+  await new Promise<void>((r) => picky.listen(0, "127.0.0.1", r));
+  const addr = picky.address();
+  pickyBase = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
 });
-afterAll(() => amazon.close());
+afterAll(async () => {
+  await amazon.close();
+  await new Promise<void>((r) => picky.close(() => r()));
+});
 
 const cookie = (value: string) => [{ name: "session-id", value, domain: "127.0.0.1", path: "/", expires: -1 }];
 
-function setup(saved: string | null): { cfg: Config; store: Store } {
+function setup(saved: string | null, base = amazon.base): { cfg: Config; store: Store } {
   const home = mkdtempSync(join(tmpdir(), "kindle-signin-"));
-  const cfg = loadConfig({ KINDLE_MCP_HOME: home, KINDLE_NOTEBOOK_BASE: amazon.base, KINDLE_REQUEST_DELAY: "0" });
+  const cfg = loadConfig({ KINDLE_MCP_HOME: home, KINDLE_NOTEBOOK_BASE: base, KINDLE_REQUEST_DELAY: "0" });
   if (saved) saveSession(cfg.sessionPath, { savedAt: "2026-09-20T08:00:00.000Z", cookies: cookie(saved) });
   return { cfg, store: new Store(cfg.dbPath) };
 }
@@ -70,6 +94,15 @@ describe("a refused sign-in", () => {
     store.close();
   });
 
+  it("is renewed when a book's pages are refused after the library was read", async () => {
+    const { cfg, store } = setup("stale", pickyBase);
+    const { calls, refresh } = renewal(true);
+    const stats = await syncCloud(cfg, store, { log: () => {}, refresh });
+    expect(stats).toMatchObject({ books_seen: 2, books_synced: 2, highlights_new: 3, session_refreshed: true });
+    expect(calls).toHaveLength(1);
+    store.close();
+  });
+
   it("is tried only once even when the renewal claims success", async () => {
     const { cfg, store } = setup("stale");
     const calls: number[] = [];
@@ -86,6 +119,15 @@ describe("a refused sign-in", () => {
     expect((err as AuthRequired).reason).toBe("missing");
     expect((err as Error).message).toContain(`No Amazon sign-in is saved yet (looked in ${cfg.home})`);
     expect(calls).toHaveLength(0);
+    store.close();
+  });
+
+  it("with an unreadable saved sign-in, asks for a new one", async () => {
+    const { cfg, store } = setup(null);
+    writeFileSync(cfg.sessionPath, "{ not json");
+    const err = await syncCloud(cfg, store, { log: () => {}, refresh: renewal(false).refresh }).catch((e: unknown) => e);
+    expect((err as AuthRequired).reason).toBe("expired");
+    expect((err as Error).message).toMatch(/^Amazon wants you to sign in again, and/);
     store.close();
   });
 

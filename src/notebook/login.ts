@@ -95,7 +95,7 @@ export async function refreshSession(cfg: Config, timeoutMs = 20_000): Promise<b
   if (!existsSync(dir) || !readdirSync(dir).length || profileInUse(dir)) return false;
   let ctx: BrowserContext;
   try {
-    ctx = await launchContext(dir, true, cfg.browserPath);
+    ctx = await launchContext(dir, true, cfg.browserPath, end);
   } catch {
     return false;
   }

@@ -3,7 +3,6 @@ import { existsSync } from "node:fs";
 
 import { parseClippings } from "./clippings.js";
 import type { Config } from "./config.js";
-import type { Book } from "./models.js";
 import { AuthRequired, DeadlineReached, NotebookClient } from "./notebook/client.js";
 import { openFetcher, type FetcherHandle } from "./notebook/fetchers.js";
 import { refreshSession } from "./notebook/login.js";
@@ -42,48 +41,68 @@ const fresh = (): SyncStats => ({ books_seen: 0, books_synced: 0, highlights_new
 const RENEW_MIN_LEFT_MS = 15_000;
 const RENEW_MS = 20_000;
 
-/** The sign-in error for this data folder: nothing saved yet, or saved and refused. */
+/** The sign-in error for this data folder: nothing saved yet, or saved (or unreadable) and refused. */
 export function signInNeeded(cfg: Config): AuthRequired {
+  if (!existsSync(cfg.sessionPath)) return new AuthRequired("missing", { home: cfg.home });
   const session = loadSession(cfg.sessionPath);
-  return session
-    ? new AuthRequired("expired", { savedAt: session.signedInAt ?? session.savedAt })
-    : new AuthRequired("missing", { home: cfg.home });
+  return new AuthRequired("expired", { savedAt: session?.signedInAt ?? session?.savedAt });
 }
 
-async function renew(cfg: Config, opts: SyncOptions): Promise<boolean> {
-  if (opts.browser || opts.signal?.aborted || !existsSync(cfg.sessionPath)) return false;
+/** How long a renewal may take now; 0 on the browser path, when cancelled, with nothing saved, or short of time. */
+function renewalBudget(cfg: Config, opts: SyncOptions): number {
+  if (opts.browser || opts.signal?.aborted || !existsSync(cfg.sessionPath)) return 0;
   const left = (opts.deadline ?? Number.POSITIVE_INFINITY) - Date.now();
-  if (left < RENEW_MIN_LEFT_MS) return false;
-  return (opts.refresh ?? refreshSession)(cfg, Math.min(RENEW_MS, left - 5_000));
-}
-
-interface Opened {
-  handle: FetcherHandle;
-  nb: NotebookClient;
-  /** Null when the budget ran out before the library was read. */
-  library: Book[] | null;
-  refreshed: boolean;
+  return left < RENEW_MIN_LEFT_MS ? 0 : Math.min(RENEW_MS, left - 5_000);
 }
 
 /**
- * Reads the library, the first request of every sync. When Amazon refuses the saved cookies, the
- * sign-in is renewed once without the user (refreshSession) and the read retried; the plain-HTTP
- * path stops at any sign-in redirect, while a browser Amazon remembers passes straight through.
+ * One sync's reads from the notebook. When Amazon refuses the saved cookies, on the library or on
+ * any book's pages, the sign-in is renewed once per sync without the user (refreshSession) and
+ * that read retried: the plain-HTTP path stops at every sign-in redirect, while a browser Amazon
+ * remembers passes straight through.
  */
-async function openNotebook(cfg: Config, opts: SyncOptions): Promise<Opened> {
-  let refreshed = false;
-  for (;;) {
-    const handle = await openFetcher(cfg, Boolean(opts.browser));
-    const nb = new NotebookClient(handle.fetch, cfg.notebookBase, cfg.requestDelayMs, opts.deadline, opts.signal);
+class NotebookReader {
+  private tried = false;
+  /** The sign-in was renewed during this sync. */
+  renewed = false;
+  private handle!: FetcherHandle;
+  private nb!: NotebookClient;
+
+  private constructor(
+    private readonly cfg: Config,
+    private readonly opts: SyncOptions,
+  ) {}
+
+  static async open(cfg: Config, opts: SyncOptions): Promise<NotebookReader> {
+    const reader = new NotebookReader(cfg, opts);
+    await reader.connect();
+    return reader;
+  }
+
+  private async connect(): Promise<void> {
+    this.handle = await openFetcher(this.cfg, Boolean(this.opts.browser));
+    const { cfg, opts } = this;
+    this.nb = new NotebookClient(this.handle.fetch, cfg.notebookBase, cfg.requestDelayMs, opts.deadline, opts.signal);
+  }
+
+  async read<T>(fn: (nb: NotebookClient) => Promise<T>): Promise<T> {
     try {
-      return { handle, nb, library: await nb.library(), refreshed };
+      return await fn(this.nb);
     } catch (e) {
-      if (e instanceof DeadlineReached) return { handle, nb, library: null, refreshed };
-      await handle.close();
-      if (!(e instanceof AuthRequired)) throw e;
-      if (refreshed || !(await renew(cfg, opts))) throw signInNeeded(cfg);
-      refreshed = true;
+      if (!(e instanceof AuthRequired) || this.tried) throw e;
+      this.tried = true;
+      const budget = renewalBudget(this.cfg, this.opts);
+      if (!budget) throw e;
+      await this.handle.close(); // saves nothing: the reply sent it to sign-in
+      if (!(await (this.opts.refresh ?? refreshSession)(this.cfg, budget))) throw e;
+      this.renewed = true;
+      await this.connect(); // the fresh cookies
+      return fn(this.nb);
     }
+  }
+
+  close(): Promise<void> {
+    return this.handle.close();
   }
 }
 
@@ -99,12 +118,16 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
   let partial = false;
   let remaining = 0;
   try {
-    const { handle, nb, library, refreshed } = await openNotebook(cfg, opts);
-    const renewed = refreshed ? { session_refreshed: true } : {};
+    const reader = await NotebookReader.open(cfg, opts);
+    const renewed = (): Partial<SyncResult> => (reader.renewed ? { session_refreshed: true } : {});
     try {
-      if (!library) {
+      let library;
+      try {
+        library = await reader.read((nb) => nb.library());
+      } catch (e) {
+        if (!(e instanceof DeadlineReached)) throw e;
         store.finishRun(runId, stats);
-        return { ...stats, partial: true, ...renewed };
+        return { ...stats, partial: true, ...renewed() };
       }
       stats.books_seen = library.length;
       if (!library.length) {
@@ -125,7 +148,7 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
       for (const [i, book] of todo.entries()) {
         let highlights;
         try {
-          highlights = await nb.annotations(book.asin!);
+          highlights = await reader.read((nb) => nb.annotations(book.asin!));
         } catch (e) {
           if (!(e instanceof DeadlineReached)) throw e;
           partial = true;
@@ -144,10 +167,10 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
       }
       if (passStart && !partial) store.deleteState(FULL_PASS);
     } finally {
-      await handle.close();
+      await reader.close();
     }
     store.finishRun(runId, stats);
-    return { ...stats, ...(partial ? { partial, books_remaining: remaining } : {}), ...renewed };
+    return { ...stats, ...(partial ? { partial, books_remaining: remaining } : {}), ...renewed() };
   } catch (e) {
     const err = e instanceof AuthRequired ? signInNeeded(cfg) : e; // a sign-in refused mid-sync too
     store.finishRun(runId, { ...stats, error: String((err as Error).message ?? err).slice(0, 500) });

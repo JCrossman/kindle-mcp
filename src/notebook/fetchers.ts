@@ -71,8 +71,14 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
 /**
  * Launch a Chromium-based browser with our separate profile: an explicit executable if configured
  * (KINDLE_BROWSER_PATH), else the user's Chrome, then Edge, then a Playwright-managed Chromium.
+ * With a deadline (epoch ms), no attempt runs past it; otherwise Playwright's own launch timeout applies.
  */
-export async function launchContext(profileDir: string, headless: boolean, executablePath: string | null = null): Promise<BrowserContext> {
+export async function launchContext(
+  profileDir: string,
+  headless: boolean,
+  executablePath: string | null = null,
+  deadline?: number,
+): Promise<BrowserContext> {
   const { chromium } = await import("playwright-core");
   const attempts: Array<{ channel?: "chrome" | "msedge"; executablePath?: string }> = [
     ...(executablePath ? [{ executablePath }] : []),
@@ -82,8 +88,13 @@ export async function launchContext(profileDir: string, headless: boolean, execu
   ];
   const errors: string[] = [];
   for (const opts of attempts) {
+    const timeout = deadline === undefined ? undefined : deadline - Date.now();
+    if (timeout !== undefined && timeout <= 0) {
+      errors.push("out of time");
+      break;
+    }
     try {
-      return await chromium.launchPersistentContext(profileDir, { ...opts, headless });
+      return await chromium.launchPersistentContext(profileDir, { ...opts, headless, ...(timeout === undefined ? {} : { timeout }) });
     } catch (e) {
       errors.push(`${opts.executablePath ?? opts.channel ?? "chromium"}: ${(e as Error).message.split("\n")[0]}`);
     }
