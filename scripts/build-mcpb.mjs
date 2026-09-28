@@ -87,14 +87,17 @@ const manifest = {
       description:
         "If set, each sync adds new highlights to one note per book (linked to your notes), files @todo, @quote and " +
         "@project, and Claude saves @post and @research as notes. Outside the Kindle folder, only notes you name with " +
-        "@project (and book notes you moved there) are written to.",
+        "@project (and book notes you moved there) are written to. Empty: the vault saved with kindle_set_vault or " +
+        "`kindle-mcp config set vault`, if any.",
+      // Every option has a default: Cowork loads a plugin's bundle only then (it never asks for values).
+      default: "",
       required: false,
     },
     obsidian_folder: {
       type: "string",
-      title: "Folder inside the vault",
-      description: "Subfolder for the Kindle notes.",
-      default: "Kindle",
+      title: "Folder inside the vault (optional)",
+      description: "Subfolder for the Kindle notes. Empty: Kindle, or the folder saved in the settings file.",
+      default: "",
       required: false,
     },
     act_on_commands: {
@@ -129,11 +132,16 @@ const manifest = {
       type: "file",
       title: "Browser executable (optional)",
       description: "Only if neither Chrome nor Edge is installed: any Chromium-based browser, used to sign in to Amazon and to renew the sign-in.",
+      default: "",
       required: false,
     },
   },
   compatibility: { claude_desktop: ">=0.10.0", platforms: ["darwin", "win32", "linux"], runtimes: { node: ">=22.13.0" } },
 };
+
+// Cowork (which runs a plugin's bundle without asking for values) skips a server whose options lack a default.
+const noDefault = Object.entries(manifest.user_config).filter(([, o]) => o.default === undefined).map(([k]) => k);
+if (noDefault.length) throw new Error(`user_config options without a default: ${noDefault.join(", ")}`);
 
 const stage = join(root, "build", "mcpb");
 rmSync(stage, { recursive: true, force: true });

@@ -22,9 +22,10 @@ import {
 import { z } from "zod";
 
 import { actionsTable, COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, type CommandWithAction } from "./commands.js";
-import { ensureDirs, type Config } from "./config.js";
+import { ensureDirs, expand, vaultProblem, writeSettingsFile, type Config } from "./config.js";
 import { loadSession } from "./notebook/session.js";
 import { Store, type HighlightRow } from "./store.js";
+import { normalizeFolder } from "./vault/write.js";
 
 export const CHAR_LIMIT = 25_000;
 /** The package version, so the server reports what npm installed. */
@@ -721,6 +722,8 @@ export function createServer(cfg: Config): McpServer {
           login_in_progress: loginInProgress,
           data_folder: cfg.home,
           version: SERVER_VERSION,
+          runtime: `Node ${process.version}`,
+          ...(cfg.inPlugin ? { running_in: "plugin" } : {}),
           obsidian_vault: cfg.obsidianVault,
           obsidian_folder: cfg.obsidianFolder,
           ...(linkExisting ? { link_existing: linkExisting } : {}),
@@ -730,9 +733,60 @@ export function createServer(cfg: Config): McpServer {
             link_notes: cfg.linkNotes,
             link_exclude: cfg.linkExclude,
           },
+          settings_file: cfg.settingsPath,
+          settings_from: cfg.sources,
           next_step: next,
         });
       }),
+  );
+
+  server.registerTool(
+    "kindle_set_vault",
+    {
+      title: "Set the Obsidian vault",
+      description:
+        "Remember which Obsidian vault kindle-mcp writes to, for every Claude app and the command line on this " +
+        "computer (saved in the data folder's config.json). Use when the user tells you where their vault is, for " +
+        "example in Cowork or Claude Code, which have no settings screen for it. The folder must be an Obsidian " +
+        "vault: it contains a .obsidian folder. Where an app has its own vault setting filled in, that one still wins.",
+      inputSchema: {
+        path: z.string().min(1).describe("The vault's top folder, e.g. ~/Documents/Notes"),
+        folder: z.string().optional().describe("Folder inside the vault for the Kindle notes; default Kindle"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ path, folder }) => {
+      const problem = vaultProblem(path);
+      if (problem) return fail(problem);
+      const vault = expand(path.trim());
+      const sub = folder?.trim() ? normalizeFolder(folder) : undefined;
+      try {
+        writeSettingsFile(cfg.settingsPath, { obsidian_vault: vault, ...(sub ? { obsidian_folder: sub } : {}) });
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+      // The running server switches now, unless this app sets the vault itself: its own setting
+      // keeps winning (inside a plugin the file does), however often the same path is saved.
+      const appWins = (key: "obsidian_vault" | "obsidian_folder"): boolean => !cfg.inPlugin && cfg.sources[key] === "environment";
+      if (!appWins("obsidian_vault")) {
+        cfg.obsidianVault = vault;
+        cfg.sources.obsidian_vault = "config file";
+      }
+      if (sub && !appWins("obsidian_folder")) {
+        cfg.obsidianFolder = sub;
+        cfg.sources.obsidian_folder = "config file";
+      }
+      const shadowed = cfg.obsidianVault !== vault;
+      return reply({
+        ok: true,
+        saved_to: cfg.settingsPath,
+        obsidian_vault: cfg.obsidianVault,
+        obsidian_folder: cfg.obsidianFolder,
+        ...(shadowed
+          ? { note: `Saved for the other apps, but this app's own vault setting (${cfg.obsidianVault}) still applies here. Change or clear it in this app's settings.` }
+          : { next: "Call kindle_sync to add the highlights to it (kindle_export_to_obsidian if Amazon isn't needed)." }),
+      });
+    },
   );
 
   server.registerTool(

@@ -1,9 +1,10 @@
 # kindle-mcp
 
-Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked.
-Sync engine (fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP
-server over stdio (14 tools, 2 prompts). With a vault, each sync appends new highlights to book notes linked to the
-user's notes, files @todo/@quote/@project itself, and hands @post/@research to the agent, which saves them with
+Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked. Sync engine
+(fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP server over
+stdio (15 tools, 2 prompts), shipped on npm, as a Claude Desktop extension (.mcpb), and as a plugin for Claude Code
+and Cowork (the same .mcpb plus four skills). With a vault, each sync appends new highlights to book notes linked to
+the user's notes, files @todo/@quote/@project itself, and hands @post/@research to the agent, which saves them with
 `kindle_complete_command`. See README.md.
 
 ## Setup
@@ -21,6 +22,9 @@ user's notes, files @todo/@quote/@project itself, and hands @post/@research to t
   `commands_done_at` is the highlight-level truth (1.0 code writes only that); `command_outputs` records finished
   commands, `leases` keeps one vault writer at a time, `book_notes` remembers exported notes. Schema changes are
   additive only: users' stores carry their reading history.
+- `src/config.ts` — settings: environment (the app's own settings) > `<data folder>/config.json` (every client reads
+  it; `kindle_set_vault`, `kindle-mcp config set`) > defaults. Inside a plugin (`CLAUDE_PLUGIN_ROOT` set) the file
+  beats the bundle's built-in defaults, since a plugin has no settings screen.
 - `src/commands.ts` — `COMMANDS` table: tag, aliases, argument style, `doneBy` (sync | agent), result, action. Single
   source of truth for parsing, tool descriptions, the router prompt and the README table (drift tests in
   `tests/docs.test.ts`).
@@ -39,10 +43,16 @@ user's notes, files @todo/@quote/@project itself, and hands @post/@research to t
 - `scripts/build-mcpb.mjs` — builds the `.mcpb` (manifest and settings generated from the live server), then unpacks
   the packed file and replays a host handshake against it (plain and repeated-path argv). Runs in CI and in the
   publish workflow before anything is published.
-- `skills/kindle-router/SKILL.md` — the router prompt as a Claude Code skill; generated (`npm run render-skill`).
+- `src/plugin.ts` — generates the plugin (`plugin/`: manifest pointing at this version's release `.mcpb`, skills
+  setup/routine/route/brief from `src/prompts/*.md`), the marketplace entry (`.claude-plugin/marketplace.json`, this
+  repo is the marketplace) and `skills/kindle-router/SKILL.md`. `npm run render-plugin` writes them; `-- --dev` also
+  writes `build/plugin-dev` (runs this checkout's `dist/`) for `claude --plugin-dir build/plugin-dev`.
 
 ## Rules
 - Never commit `.har`, `.db`, `session.json`, or `doctor-*.html`; they hold highlight text and session state.
+- `plugin/`, `.claude-plugin/` and `skills/` are generated: edit `src/plugin.ts` or `src/prompts/*.md`, then
+  `npm run render-plugin` (a drift test fails otherwise). No `bin/` in the plugin: chat and Cowork refuse it.
+- Every `.mcpb` setting needs a default (the build checks): Cowork skips a bundle whose settings lack one.
 - Fixtures must be scrubbed: placeholder text, account id replaced, cover URLs replaced. No real titles, ASINs or
   counts from anyone's library in files, commits or PR text (a docs test checks README and this file for counts).
 - When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, save a scrubbed fixture, fix selectors, add a test.
@@ -71,6 +81,11 @@ user's notes, files @todo/@quote/@project itself, and hands @post/@research to t
   the stand-in forgets the browser; a signed-out `kindle_sync` still files and returns the queue; headless Claude
   Code with the README's routine prompt and a stale sign-in wrote the waiting @post and never called
   `kindle_login`. Not yet checked live: that Amazon renews a remembered browser's sign-in headless.
+- 1.2.0 (2026-09-28): Claude Code 2.1.283 loads the plugin with its `.mcpb` from a local path and from a release URL
+  (14 tools then, all connected; `CLAUDE_PLUGIN_ROOT` reaches the bundled server, so the settings file beats the
+  bundle's defaults); `claude plugin validate` passes for `plugin/` and the marketplace; headless `/kindle:routine`
+  and `/kindle:setup` through `build/plugin-dev` against the local stand-in (vault from `kindle_set_vault`, @post
+  saved). Not yet checked: Cowork, the app's Customize > Plugins install, the Desktop Code tab running the bundle.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.

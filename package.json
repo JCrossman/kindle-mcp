@@ -1,6 +1,6 @@
 {
   "name": "kindle-mcp-server",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "description": "Kindle highlights and notes as an agent-readable store: sync from read.amazon.com, SQLite + FTS, MCP server, @command router.",
   "type": "module",
   "license": "MIT",
@@ -42,7 +42,8 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "npm run build && npm test",
-    "render-skill": "tsx scripts/render-skill.ts",
+    "render-plugin": "tsx scripts/render-plugin.ts",
+    "render-skill": "tsx scripts/render-plugin.ts",
     "mcpb": "node scripts/build-mcpb.mjs"
   },
   "dependencies": {
