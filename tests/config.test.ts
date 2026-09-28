@@ -123,6 +123,21 @@ describe("loadConfig", () => {
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ obsidian_vault: "/v", obsidian_folder: "K" });
   });
 
+  it("keeps what it doesn't know in the settings file, and never overwrites one it can't read", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "kindle-cfg-")), "config.json");
+    // A key from a newer version, and a value this version reads as the wrong type: both survive a write.
+    writeFileSync(path, JSON.stringify({ future_key: { a: 1 }, link_exclude: { b: 2 } }));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    writeSettingsFile(path, { obsidian_folder: "K" });
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ future_key: { a: 1 }, link_exclude: { b: 2 }, obsidian_folder: "K" });
+    writeFileSync(path, "{ half-edited");
+    expect(() => writeSettingsFile(path, { obsidian_folder: "X" })).toThrow(/Left .*config\.json unchanged/);
+    expect(readFileSync(path, "utf8")).toBe("{ half-edited");
+    writeFileSync(path, "\n"); // empty: nothing to keep
+    writeSettingsFile(path, { obsidian_folder: "Y" });
+    expect(readSettingsFile(path)).toEqual({ obsidian_folder: "Y" });
+  });
+
   it("accepts only an Obsidian vault as the vault", () => {
     const dir = mkdtempSync(join(tmpdir(), "kindle-vault-"));
     expect(vaultProblem(join(dir, "missing"))).toMatch(/There is no folder/);

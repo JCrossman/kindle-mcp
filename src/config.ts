@@ -90,19 +90,27 @@ function validSetting(key: SettingKey, v: unknown): boolean {
   }
 }
 
+/** The file's JSON object as written, {} when there is none (or it is empty); throws if it isn't one. */
+function readSettingsObject(path: string): Record<string, unknown> {
+  if (!existsSync(path)) return {};
+  const text = readFileSync(path, "utf8");
+  if (!text.trim()) return {};
+  const data = JSON.parse(text) as unknown;
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a JSON object");
+  return data as Record<string, unknown>;
+}
+
 /**
  * The settings file, or {} when there is none. An unreadable file, and any value of the wrong type
  * for its key, is ignored with a warning (stderr).
  */
 export function readSettingsFile(path: string): SettingsFile {
-  if (!existsSync(path)) return {};
   try {
-    const data = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a JSON object");
+    const data = readSettingsObject(path);
     const out: SettingsFile = {};
     const wrong: string[] = [];
     for (const key of Object.keys(SETTING_ENV) as SettingKey[]) {
-      const v = (data as Record<string, unknown>)[key];
+      const v = data[key];
       if (v === undefined) continue;
       if (validSetting(key, v)) out[key] = v as string | boolean | string[];
       else wrong.push(key);
@@ -156,22 +164,30 @@ function withSettingsLock<T>(path: string, waitMs: number, fn: () => T): T {
   }
 }
 
-/** Sets (or, with null, removes) keys in the settings file; the rest of the file is kept. */
+/**
+ * Sets (or, with null, removes) keys in the settings file. Everything else in it stays as written,
+ * including keys this version doesn't know (a newer one may have saved them). A file that isn't a
+ * JSON object is left alone: the error says so.
+ */
 export function writeSettingsFile(
   path: string,
   patch: Partial<Record<SettingKey, string | boolean | string[] | null>>,
   waitMs = 2000,
-): SettingsFile {
-  return withSettingsLock(path, waitMs, () => {
-    const next: SettingsFile = { ...readSettingsFile(path) };
-    for (const [k, v] of Object.entries(patch) as Array<[SettingKey, string | boolean | string[] | null]>) {
+): void {
+  withSettingsLock(path, waitMs, () => {
+    let next: Record<string, unknown>;
+    try {
+      next = { ...readSettingsObject(path) };
+    } catch (e) {
+      throw new Error(`Left ${path} unchanged: it can't be read (${(e as Error).message}). Fix or delete it, then try again.`);
+    }
+    for (const [k, v] of Object.entries(patch)) {
       if (v === null) delete next[k];
       else next[k] = v;
     }
     const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
     renameSync(tmp, path);
-    return next;
   });
 }
 
