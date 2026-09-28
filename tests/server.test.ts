@@ -283,7 +283,7 @@ describe("MCP server", () => {
     expect(res.data.error).toMatch(/isn't an Obsidian vault/);
 
     mkdirSync(join(notes, ".obsidian"));
-    res = await call(client, "kindle_set_vault", { path: notes, folder: "Reading/Kindle" });
+    res = await call(client, "kindle_set_vault", { path: `${notes} `, folder: "Reading/Kindle" }); // stray space trimmed
     expect(res.data).toMatchObject({ ok: true, obsidian_vault: notes, obsidian_folder: "Reading/Kindle", saved_to: join(home, "config.json") });
     const status = (await call(client, "kindle_status")).data;
     expect(status).toMatchObject({ obsidian_vault: notes, settings_file: join(home, "config.json"), runtime: expect.stringMatching(/^Node v/) });
@@ -297,8 +297,13 @@ describe("MCP server", () => {
 
   it("keeps an app's own vault setting in charge, and says so", async () => {
     const { client, home } = await connected(); // OBSIDIAN_VAULT set, as the extension would
+    mkdirSync(join(home, "vault", ".obsidian"));
     const other = join(home, "Other");
     mkdirSync(join(other, ".obsidian"), { recursive: true });
+    // Saving the app's own path first must not hand control to the file.
+    const same = (await call(client, "kindle_set_vault", { path: join(home, "vault") })).data;
+    expect([same.obsidian_vault, same.note]).toEqual([join(home, "vault"), undefined]);
+    expect((await call(client, "kindle_status")).data.settings_from.obsidian_vault).toBe("environment");
     const res = (await call(client, "kindle_set_vault", { path: other })).data;
     expect(res.obsidian_vault).toBe(join(home, "vault"));
     expect(res.note).toMatch(/this app's own vault setting .* still applies here/);

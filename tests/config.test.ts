@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,6 +91,29 @@ describe("loadConfig", () => {
     expect(warn.mock.calls[0][0]).toMatch(/ignoring .*config\.json/);
   });
 
+  it("ignores a value of the wrong type for its key, with a warning", () => {
+    const home = mkdtempSync(join(tmpdir(), "kindle-cfg-"));
+    writeFileSync(join(home, "config.json"), JSON.stringify({
+      browser_path: false, obsidian_vault: 3, act_on_commands: "maybe", link_exclude: [1], auto_file: "no", obsidian_folder: "K",
+    }));
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    const cfg = loadConfig({ KINDLE_MCP_HOME: home });
+    expect([cfg.browserPath, cfg.obsidianVault, cfg.actOnCommands, cfg.linkExclude, cfg.autoFile, cfg.obsidianFolder]).toEqual([null, null, true, [], false, "K"]);
+    expect(warn.mock.calls[0][0]).toMatch(/ignoring obsidian_vault, act_on_commands, link_exclude, browser_path in .*: wrong type/);
+  });
+
+  it("changes the settings file one process at a time", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "kindle-cfg-")), "config.json");
+    writeSettingsFile(path, { obsidian_folder: "K" });
+    expect(existsSync(`${path}.lock`)).toBe(false); // released after each write
+    writeFileSync(`${path}.lock`, ""); // another process is writing
+    expect(() => writeSettingsFile(path, { obsidian_folder: "X" }, 50)).toThrow(/being changed by another process/);
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(`${path}.lock`, old, old); // ...or crashed long ago
+    writeSettingsFile(path, { obsidian_folder: "Y" }, 50);
+    expect([readSettingsFile(path).obsidian_folder, existsSync(`${path}.lock`)]).toEqual(["Y", false]);
+  });
+
   it("writes settings without losing the others, and removes one with null", () => {
     const path = join(mkdtempSync(join(tmpdir(), "kindle-cfg-")), "sub", "config.json");
     writeSettingsFile(path, { obsidian_vault: "/v", act_on_commands: false });
@@ -105,7 +128,15 @@ describe("loadConfig", () => {
     expect(vaultProblem(join(dir, "missing"))).toMatch(/There is no folder/);
     expect(vaultProblem("Documents/Notes")).toMatch(/full path/);
     expect(vaultProblem(dir)).toMatch(/isn't an Obsidian vault/);
-    mkdirSync(join(dir, ".obsidian"));
-    expect(vaultProblem(dir)).toBeNull();
+    writeFileSync(join(dir, ".obsidian"), "not a folder");
+    expect(vaultProblem(dir)).toMatch(/isn't an Obsidian vault/);
+    const other = mkdtempSync(join(tmpdir(), "kindle-vault-"));
+    mkdirSync(join(other, ".obsidian"));
+    expect(vaultProblem(`${other} `)).toBeNull();
+    mkdirSync(join(dir, "sub", ".obsidian"), { recursive: true });
+    expect(vaultProblem(join(dir, "sub"))).toBeNull();
+    const plain = mkdtempSync(join(tmpdir(), "kindle-vault-"));
+    mkdirSync(join(plain, ".obsidian"));
+    expect(vaultProblem(plain)).toBeNull();
   });
 });

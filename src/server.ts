@@ -758,20 +758,25 @@ export function createServer(cfg: Config): McpServer {
     async ({ path, folder }) => {
       const problem = vaultProblem(path);
       if (problem) return fail(problem);
-      const vault = expand(path);
+      const vault = expand(path.trim());
       const sub = folder?.trim() ? normalizeFolder(folder) : undefined;
-      writeSettingsFile(cfg.settingsPath, { obsidian_vault: vault, ...(sub ? { obsidian_folder: sub } : {}) });
-      // The running server switches now, unless this app sets the vault itself (its setting wins;
-      // inside a plugin, the file does).
-      const shadowed = !cfg.inPlugin && cfg.sources.obsidian_vault === "environment" && cfg.obsidianVault !== vault;
-      if (!shadowed) {
+      try {
+        writeSettingsFile(cfg.settingsPath, { obsidian_vault: vault, ...(sub ? { obsidian_folder: sub } : {}) });
+      } catch (e) {
+        return fail((e as Error).message);
+      }
+      // The running server switches now, unless this app sets the vault itself: its own setting
+      // keeps winning (inside a plugin the file does), however often the same path is saved.
+      const appWins = (key: "obsidian_vault" | "obsidian_folder"): boolean => !cfg.inPlugin && cfg.sources[key] === "environment";
+      if (!appWins("obsidian_vault")) {
         cfg.obsidianVault = vault;
         cfg.sources.obsidian_vault = "config file";
       }
-      if (sub && (cfg.inPlugin || cfg.sources.obsidian_folder !== "environment")) {
+      if (sub && !appWins("obsidian_folder")) {
         cfg.obsidianFolder = sub;
         cfg.sources.obsidian_folder = "config file";
       }
+      const shadowed = cfg.obsidianVault !== vault;
       return reply({
         ok: true,
         saved_to: cfg.settingsPath,

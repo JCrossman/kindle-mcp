@@ -1,5 +1,5 @@
 /** Paths and settings. Everything is overridable by environment variable. */
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -74,17 +74,40 @@ export function expand(p: string): string {
   return resolve(p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
 }
 
-/** The settings file, or {} when there is none. An unreadable one is ignored with a warning (stderr). */
+/** Whether a settings-file value has the right type for its key (text for paths, on/off for switches). */
+function validSetting(key: SettingKey, v: unknown): boolean {
+  switch (key) {
+    case "obsidian_vault":
+    case "obsidian_folder":
+    case "browser_path":
+      return typeof v === "string";
+    case "act_on_commands":
+    case "auto_file":
+    case "link_notes":
+      return typeof v === "boolean" || (typeof v === "string" && parseOnOff(v) !== null);
+    case "link_exclude":
+      return typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string"));
+  }
+}
+
+/**
+ * The settings file, or {} when there is none. An unreadable file, and any value of the wrong type
+ * for its key, is ignored with a warning (stderr).
+ */
 export function readSettingsFile(path: string): SettingsFile {
   if (!existsSync(path)) return {};
   try {
     const data = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a JSON object");
     const out: SettingsFile = {};
+    const wrong: string[] = [];
     for (const key of Object.keys(SETTING_ENV) as SettingKey[]) {
       const v = (data as Record<string, unknown>)[key];
-      if (typeof v === "string" || typeof v === "boolean" || (Array.isArray(v) && v.every((x) => typeof x === "string"))) out[key] = v;
+      if (v === undefined) continue;
+      if (validSetting(key, v)) out[key] = v as string | boolean | string[];
+      else wrong.push(key);
     }
+    if (wrong.length) console.error(`kindle-mcp: ignoring ${wrong.join(", ")} in ${path}: wrong type`);
     return out;
   } catch (e) {
     console.error(`kindle-mcp: ignoring ${path}: ${(e as Error).message}`);
@@ -92,18 +115,64 @@ export function readSettingsFile(path: string): SettingsFile {
   }
 }
 
-/** Sets (or, with null, removes) keys in the settings file; the rest of the file is kept. */
-export function writeSettingsFile(path: string, patch: Partial<Record<SettingKey, string | boolean | string[] | null>>): SettingsFile {
-  const next: SettingsFile = { ...readSettingsFile(path) };
-  for (const [k, v] of Object.entries(patch) as Array<[SettingKey, string | boolean | string[] | null]>) {
-    if (v === null) delete next[k];
-    else next[k] = v;
-  }
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Runs `fn` holding `<path>.lock`, so two processes (a chat, a routine, the command line) can't
+ * read the same old file and overwrite each other's change. A lock older than 10 s is stale.
+ */
+function withSettingsLock<T>(path: string, waitMs: number, fn: () => T): T {
+  const lock = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-  renameSync(tmp, path);
-  return next;
+  const until = Date.now() + waitMs;
+  for (;;) {
+    try {
+      closeSync(openSync(lock, "wx"));
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > 10_000) {
+          unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue; // released meanwhile
+      }
+      if (Date.now() > until) throw new Error(`The settings file is being changed by another process (${lock}); try again.`);
+      sleepSync(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lock);
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/** Sets (or, with null, removes) keys in the settings file; the rest of the file is kept. */
+export function writeSettingsFile(
+  path: string,
+  patch: Partial<Record<SettingKey, string | boolean | string[] | null>>,
+  waitMs = 2000,
+): SettingsFile {
+  return withSettingsLock(path, waitMs, () => {
+    const next: SettingsFile = { ...readSettingsFile(path) };
+    for (const [k, v] of Object.entries(patch) as Array<[SettingKey, string | boolean | string[] | null]>) {
+      if (v === null) delete next[k];
+      else next[k] = v;
+    }
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+    renameSync(tmp, path);
+    return next;
+  });
 }
 
 /** true/false/1/0/yes/no/on/off; null for anything else. */
@@ -133,7 +202,8 @@ export function vaultProblem(path: string): string | null {
   if (!isAbsolute(path.trim()) && !path.trim().startsWith("~")) return `Give the vault's full path (starting with / or ~), not ${path}.`;
   const full = expand(path.trim());
   if (!existsSync(full) || !statSync(full).isDirectory()) return `There is no folder at ${full}.`;
-  if (!existsSync(join(full, ".obsidian"))) {
+  const marker = join(full, ".obsidian");
+  if (!existsSync(marker) || !statSync(marker).isDirectory()) {
     return `${full} isn't an Obsidian vault: it has no .obsidian folder. Give the vault's top folder (open it in Obsidian once if it's new).`;
   }
   return null;
