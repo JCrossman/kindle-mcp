@@ -11,6 +11,8 @@
  *   kindle-mcp link-existing [--apply]    preview (or apply) links in highlights exported before
  *              [--book X] [--always|--never]
  *   kindle-mcp status                     counts, pending @commands, last run
+ *   kindle-mcp config [set KEY VALUE]     the settings file every client reads (vault, folder, ...)
+ *              [unset KEY]
  *   kindle-mcp doctor [--asin X|--book T] dump live HTML to debug selectors
  *   kindle-mcp prompt NAME [--tag X]      print a router prompt (route-pending | weekly-brief) for any runner
  *              [--dry-run] [--since 7d]
@@ -22,7 +24,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
-import { ensureDirs, loadConfig, type Config } from "./config.js";
+import {
+  ensureDirs, expand, loadConfig, parseOnOff, SETTING_ENV, settingValue, vaultProblem, writeSettingsFile,
+  type Config, type SettingKey,
+} from "./config.js";
+import { normalizeFolder } from "./vault/write.js";
 import { quietExperimentalWarnings } from "./warnings.js";
 
 quietExperimentalWarnings();
@@ -38,6 +44,11 @@ const USAGE = `kindle-mcp <command> [options]
   link-existing [--apply] [--book X]     preview links for highlights exported before; --apply writes them;
                 [--always | --never]     --always also links future matches, --never stops the question
   status                                 counts, pending @commands, last run
+  config                                 settings in effect, where each comes from, and the settings file
+  config set KEY VALUE                   save one in the settings file every client reads, e.g.
+                                         config set vault ~/Documents/Notes (must be an Obsidian vault)
+  config unset KEY                       keys: vault, folder, act_on_commands, auto_file, link_notes,
+                                         link_exclude, browser_path
   doctor [--asin X | --book TITLE]       dump live HTML to ~/.kindle-mcp and report what the parser finds
   prompt route-pending [--tag X] [--dry-run]
   prompt weekly-brief [--since 7d]       print a router prompt, e.g. claude -p "$(kindle-mcp prompt route-pending)"
@@ -85,6 +96,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
 
   const cfg = loadConfig();
   ensureDirs(cfg);
+
+  if (cmd === "config") return configCommand(cfg, positionals.slice(1));
 
   if (cmd === "serve") {
     const { serveStdio } = await import("./server.js");
@@ -236,4 +249,51 @@ if (invokedDirectly()) {
       process.exit(1);
     },
   );
+}
+
+/** `kindle-mcp config [set KEY VALUE | unset KEY]`: the settings file every client reads. */
+function configCommand(cfg: Config, args: string[]): number {
+  // Declared in here: main() runs while this module is still loading, before later top-level consts exist.
+  const aliases: Record<string, SettingKey> = { vault: "obsidian_vault", folder: "obsidian_folder" };
+  const [action, rawKey = "", ...rest] = args;
+  const keys = Object.keys(SETTING_ENV) as SettingKey[];
+  if (!action) {
+    const settings = Object.fromEntries(keys.map((k) => [k, { value: settingValue(cfg, k), from: cfg.sources[k] }]));
+    console.log(JSON.stringify({ settings_file: cfg.settingsPath, settings }, null, 2));
+    return 0;
+  }
+  const key = aliases[rawKey] ?? (rawKey as SettingKey);
+  const raw = rest.join(" ").trim();
+  if (!keys.includes(key) || !(action === "unset" || (action === "set" && raw))) {
+    process.stderr.write(`Usage: kindle-mcp config [set KEY VALUE | unset KEY]. Keys: vault, folder, ${keys.slice(2).join(", ")}.\n`);
+    return 2;
+  }
+  if (action === "unset") {
+    writeSettingsFile(cfg.settingsPath, { [key]: null });
+    console.log(`Removed ${key} from ${cfg.settingsPath}.`);
+    return 0;
+  }
+  let value: string | boolean | string[];
+  if (key === "obsidian_vault") {
+    const problem = vaultProblem(raw);
+    if (problem) {
+      console.error(`ERROR: ${problem}`);
+      return 1;
+    }
+    value = expand(raw);
+  } else if (key === "obsidian_folder") value = normalizeFolder(raw);
+  else if (key === "browser_path") value = expand(raw);
+  else if (key === "link_exclude") value = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  else {
+    const on = parseOnOff(raw);
+    if (on === null) {
+      console.error(`ERROR: ${key} takes true or false.`);
+      return 2;
+    }
+    value = on;
+  }
+  writeSettingsFile(cfg.settingsPath, { [key]: value });
+  const shadowed = cfg.sources[key] === "environment" ? ` ${SETTING_ENV[key]} is set here and still wins over it.` : "";
+  console.log(`Saved ${key} in ${cfg.settingsPath}.${shadowed}`);
+  return 0;
 }

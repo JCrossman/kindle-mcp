@@ -21,7 +21,7 @@ export const TOOLS = [
   "kindle_list_books", "kindle_get_highlights", "kindle_search_highlights", "kindle_get_new_since",
   "kindle_get_pending_commands", "kindle_get_command_context", "kindle_complete_command", "kindle_mark_command_done",
   "kindle_search_vault", "kindle_link_existing_highlights", "kindle_export_to_obsidian", "kindle_sync",
-  "kindle_status", "kindle_login",
+  "kindle_status", "kindle_set_vault", "kindle_login",
 ];
 
 let amazon: FakeAmazon;
@@ -270,6 +270,45 @@ describe("MCP server", () => {
     expect(res.data.pending.count).toBe(1);
     status = (await call(client, "kindle_status")).data;
     expect(status).toMatchObject({ session_saved: true, session_saved_at: "2026-09-21T08:00:00.000Z", signed_in_at: "2026-09-19T08:00:00.000Z" });
+  });
+
+  it("sets the vault for every client with kindle_set_vault: real vaults only, at once, and after a restart", async () => {
+    const { client, home } = await connected({}, false);
+    const notes = join(home, "Notes");
+    mkdirSync(notes);
+    let res = await call(client, "kindle_set_vault", { path: join(home, "nowhere") });
+    expect(res.isError).toBe(true);
+    expect(res.data.error).toMatch(/There is no folder/);
+    res = await call(client, "kindle_set_vault", { path: notes });
+    expect(res.data.error).toMatch(/isn't an Obsidian vault/);
+
+    mkdirSync(join(notes, ".obsidian"));
+    res = await call(client, "kindle_set_vault", { path: notes, folder: "Reading/Kindle" });
+    expect(res.data).toMatchObject({ ok: true, obsidian_vault: notes, obsidian_folder: "Reading/Kindle", saved_to: join(home, "config.json") });
+    const status = (await call(client, "kindle_status")).data;
+    expect(status).toMatchObject({ obsidian_vault: notes, settings_file: join(home, "config.json"), runtime: expect.stringMatching(/^Node v/) });
+    expect(status.settings_from).toMatchObject({ obsidian_vault: "config file", obsidian_folder: "config file", act_on_commands: "default" });
+    expect((await call(client, "kindle_export_to_obsidian")).isError).toBeFalsy();
+    expect(existsSync(join(notes, "Reading", "Kindle", "Thinking, Fast and Slow.md"))).toBe(true);
+
+    const again = await connected({}, false, home); // a restart reads the settings file
+    expect((await call(again.client, "kindle_status")).data.obsidian_vault).toBe(notes);
+  });
+
+  it("keeps an app's own vault setting in charge, and says so", async () => {
+    const { client, home } = await connected(); // OBSIDIAN_VAULT set, as the extension would
+    const other = join(home, "Other");
+    mkdirSync(join(other, ".obsidian"), { recursive: true });
+    const res = (await call(client, "kindle_set_vault", { path: other })).data;
+    expect(res.obsidian_vault).toBe(join(home, "vault"));
+    expect(res.note).toMatch(/this app's own vault setting .* still applies here/);
+    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).obsidian_vault).toBe(other);
+
+    // Inside a plugin the saved vault wins, so it applies at once.
+    const plugin = await connected({ CLAUDE_PLUGIN_ROOT: "/plugins/kindle" }, true, home);
+    expect((await call(plugin.client, "kindle_status")).data).toMatchObject({ obsidian_vault: other, running_in: "plugin" });
+    const again = (await call(plugin.client, "kindle_set_vault", { path: other })).data;
+    expect([again.obsidian_vault, again.note]).toEqual([other, undefined]);
   });
 
   it("parses since spans and dates", () => {

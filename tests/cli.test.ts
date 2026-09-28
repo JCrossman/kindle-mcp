@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -82,6 +83,49 @@ describe("kindle-mcp CLI", () => {
     const store = new Store(cfg.dbPath);
     expect(store.status().last_run?.error).toMatch(/kindle-mcp login/);
     store.close();
+  });
+
+  it("keeps settings in the settings file with config set/unset", async () => {
+    const home = freshHome();
+    vi.stubEnv("OBSIDIAN_VAULT", "");
+    const notes = join(home, "Notes");
+    mkdirSync(notes);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(await main(["config", "set", "vault", notes])).toBe(1); // not a vault yet
+    expect(err.mock.calls.at(-1)?.[0]).toMatch(/isn't an Obsidian vault/);
+    mkdirSync(join(notes, ".obsidian"));
+    expect(await main(["config", "set", "vault", notes])).toBe(0);
+    expect(await main(["config", "set", "act_on_commands", "no"])).toBe(0);
+    expect(await main(["config", "set", "link_exclude", "Journal, Private"])).toBe(0);
+    expect(await main(["config", "set", "auto_file", "maybe"])).toBe(2);
+    expect(await main(["config", "set", "colour", "blue"])).toBe(2);
+    expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8"))).toEqual({
+      obsidian_vault: notes, act_on_commands: false, link_exclude: ["Journal", "Private"],
+    });
+    const cfg = loadConfig();
+    expect([cfg.obsidianVault, cfg.actOnCommands, cfg.sources.obsidian_vault]).toEqual([notes, false, "config file"]);
+    expect(await main(["config"])).toBe(0);
+    expect(JSON.parse(out.mock.calls.at(-1)?.[0]).settings.obsidian_vault).toEqual({ value: notes, from: "config file" });
+    expect(await main(["config", "unset", "act_on_commands"])).toBe(0);
+    expect(loadConfig().actOnCommands).toBe(true);
+    err.mockRestore();
+    out.mockRestore();
+  });
+
+  it("runs config as a real process (main starts while the module is still loading)", () => {
+    const home = mkdtempSync(join(tmpdir(), "kindle-proc-"));
+    const vault = join(home, "Notes");
+    mkdirSync(join(vault, ".obsidian"), { recursive: true });
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, ["--import", "tsx", join(__dirname, "..", "src", "cli.ts"), ...args], {
+        cwd: join(__dirname, ".."),
+        env: { ...process.env, KINDLE_MCP_HOME: home, OBSIDIAN_VAULT: "" },
+        encoding: "utf8",
+      });
+    const set = run("config", "set", "vault", vault);
+    expect(set.status, set.stderr).toBe(0);
+    expect(JSON.parse(run("config").stdout).settings.obsidian_vault).toEqual({ value: vault, from: "config file" });
   });
 
   it("imports clippings, prints status and exports", async () => {

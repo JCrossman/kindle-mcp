@@ -19,10 +19,39 @@ notebook. The command line needs Node 22.13 or newer; the Claude Desktop extensi
 
 ## Setup
 
-Pick one: the Claude Desktop extension (simplest), Claude Code, or the command line alone. They all
-keep their data in `~/.kindle-mcp`, so you can mix them.
+Pick one: the plugin for Claude Code and Cowork, the extension for Claude Desktop's chat, or the
+command line alone. They all keep their data and settings in `~/.kindle-mcp`, so you can mix them.
 
-### Claude Desktop
+### Claude Code and Cowork: the plugin
+
+One install gives Claude Code (including the Desktop app's Code tab, where routines run) and Cowork
+the Kindle tools and four skills. The plugin doesn't load in chat (claude.ai, the Desktop app's
+chat, mobile); use the extension there.
+
+1. You need Google Chrome or Microsoft Edge for signing in to Amazon. Claude Code in a terminal
+   runs the server with the Node.js on your PATH (22.13 or newer). If you use Obsidian, back up
+   your vault first: every sync adds to it.
+2. Install it:
+   - In the Claude app: **Customize**, **Plugins**, add the marketplace `JCrossman/kindle-mcp`, and
+     install **kindle**. It then appears in Claude Code on this computer too.
+   - Or in Claude Code: `/plugin marketplace add JCrossman/kindle-mcp`, then
+     `/plugin install kindle@kindle-mcp`.
+3. Run `/kindle:setup`. It checks the connection, opens the Amazon sign-in (tick **Keep me signed
+   in**), asks where your Obsidian vault is and saves it with `kindle_set_vault`, runs the first
+   sync, and offers to schedule the routine.
+
+| Skill | What it does |
+|---|---|
+| `/kindle:setup` | The first run, step by step. |
+| `/kindle:routine` | The unattended sync for a scheduled routine. Runs only when called. |
+| `/kindle:route [tag] [dry run]` | Work through pending @commands. |
+| `/kindle:brief [14d]` | A weekly reading brief from recent highlights. |
+
+In Cowork, the plugin's server runs when the Cowork session runs on your computer. If you also use
+the extension and each Kindle tool shows up twice in a Code session, turn the extension off there
+(the **+** menu, **Connectors**).
+
+### Claude Desktop chat: the extension
 
 1. You need Claude Desktop, and Google Chrome or Microsoft Edge for signing in to Amazon. If you
    use Obsidian, back up your vault first: every sync adds to it.
@@ -57,8 +86,9 @@ awake.
    don't use it. Don't pick your vault (Claude's own file tools would write in it directly,
    outside kindle-mcp's append-only writes) or `~/.kindle-mcp` (it holds your Amazon session).
 2. In the **Code** tab, open **Routines**, click **New routine** and choose **Local**. Give it a
-   name and a description, paste the prompt below into **Instructions**, leave the permission
-   mode on **Manual**, select the folder from step 1, and leave **Worktree** off.
+   name and a description. **Instructions**: `/kindle:routine` with the plugin; without it, paste
+   the prompt below. Leave the permission mode on **Manual**, select the folder from step 1, and
+   leave **Worktree** off.
 3. Pick a schedule. Hourly costs Amazon almost nothing (an idle sync is two requests), but each
    run is a Claude session that counts toward your plan's usage; Daily, or every few hours with
    Custom, uses less.
@@ -68,14 +98,15 @@ awake.
    WebFetch if you use @research. A scheduled run can't answer a prompt: it waits, and the runs
    after it are skipped until you do. Don't always-allow `kindle_login` (it opens a window) or
    `kindle_link_existing_highlights` (it changes older notes, which is your call).
-5. If that run can't find the Kindle tools, turn **Kindle highlights** on in a Code session's **+**
-   menu, under **Connectors**, or register the server for Claude Code (next section).
+5. If that run can't find the Kindle tools: with the plugin, check it's enabled (`/plugin`); with
+   only the extension, turn **Kindle highlights** on in a Code session's **+** menu, under
+   **Connectors**, or install the plugin.
 6. Optional: Settings, Desktop app, General, **Keep computer awake**. A computer that sleeps
    through a run skips it; when it wakes, Claude Desktop runs the latest missed one once.
 
 Each run shows a notification and a session under **Scheduled** in the sidebar. If the summary
 starts with "Kindle sign-in needed", say "Sign me in to Kindle" in any chat; the next run catches
-up. The prompt:
+up. The prompt, which is also what `/kindle:routine` runs:
 
 ```text
 Sync my Kindle highlights with kindle_sync. If the result says partial, call kindle_sync again
@@ -91,11 +122,11 @@ Finish with a short summary: new highlights, what was filed where, the notes you
 title), and anything that needs me.
 ```
 
-### Claude Code
+### Claude Code without the plugin
 
 1. `npm install -g kindle-mcp-server` (Node 22.13 or newer).
-2. `claude mcp add --scope user kindle -e OBSIDIAN_VAULT="$HOME/path/to/vault" -- kindle-mcp serve`
-   (leave out `-e ...` if you don't use a vault).
+2. `claude mcp add --scope user kindle -- kindle-mcp serve`, and if you use Obsidian,
+   `kindle-mcp config set vault ~/path/to/vault`.
 3. `kindle-mcp login`: a browser opens; sign in and tick **Keep me signed in**.
 4. In Claude Code, say "Sync my Kindle highlights". Slash commands and headless runs are under
    [Example prompts](#example-prompts).
@@ -129,19 +160,25 @@ For cron or launchd, hourly is cheap. The sync files what it can; `--on-pending`
 when @post or @research is left:
 
 ```cron
-30 * * * * PATH=/usr/local/bin:$PATH OBSIDIAN_VAULT="$HOME/path/to/vault" kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
+30 * * * * PATH=/usr/local/bin:$PATH kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
 ```
 
-Cron doesn't see the extension's settings, so the vault path goes in the line. Register the server
-for Claude Code first (`claude mcp add` above) so the headless run can see it. The hook gets
+Cron doesn't see the extension's settings, but it reads the settings file: set the vault there once
+with `kindle-mcp config set vault ~/path/to/vault` (or put `OBSIDIAN_VAULT=...` in the line).
+Register the server for Claude Code first (`claude mcp add` above) so the headless run can see it.
+The hook gets
 `KINDLE_PENDING=<count>` in its environment. Windows: the same command in Task Scheduler with
 `cmd /c`.
 
 ### Updating
 
-Download the new `.mcpb` and open it; Claude Desktop replaces the old version (check its settings
-afterwards). For Claude Code and cron: `npm install -g kindle-mcp-server@latest`. Keep both on the
-same version, since they share `~/.kindle-mcp`.
+- **The plugin:** update it from **Customize**, **Plugins** in the app, or in a terminal with
+  `claude plugin marketplace update kindle-mcp` and then `claude plugin update kindle@kindle-mcp`.
+- **The extension:** download the new `.mcpb` and open it; Claude Desktop replaces the old version
+  (check its settings afterwards).
+- **The command line:** `npm install -g kindle-mcp-server@latest`.
+
+Keep them on the same version: they share `~/.kindle-mcp`.
 
 ### If it keeps asking you to sign in
 
@@ -269,6 +306,7 @@ highlights to my notes"), or run `kindle-mcp link-existing` to preview and add `
 - "Only handle my @research notes."
 
 **Obsidian**
+- "Use ~/Documents/Notes as my Kindle vault." (saves it for every Claude app on this computer)
 - "Which of my notes relate to this highlight?"
 - "Search my vault for notes about <topic>."
 - "Link my older Kindle highlights to my notes." (previews first, applies on your yes)
@@ -285,7 +323,8 @@ highlights to my notes"), or run `kindle-mcp link-existing` to preview and add `
 | Tool | What it does |
 |---|---|
 | `kindle_sync` | Pull new highlights from Amazon, update the vault, return what is left with an instruction. |
-| `kindle_status` | Counts, the queue by tag, last sync, session, vault and settings, and a next step. |
+| `kindle_status` | Counts, the queue by tag, last sync, session, vault and settings (and where each comes from), and a next step. |
+| `kindle_set_vault` | Save which Obsidian vault to use, for every client; only a folder with `.obsidian` in it. |
 | `kindle_login` | Open the one-time Amazon sign-in window. |
 | `kindle_list_books` | Books, most recently highlighted first. |
 | `kindle_get_highlights` | One book's highlights in reading order. |
@@ -305,29 +344,40 @@ means Amazon didn't return its text, usually because it is an image or a table.
 
 ## Settings
 
-The Claude Desktop extension shows these in its settings; everywhere else they are environment
-variables.
+Settings come from three places, and the first one set wins:
 
-| Variable | Desktop setting | Default |
-|---|---|---|
-| `KINDLE_MCP_HOME` | Data folder | `~/.kindle-mcp` |
-| `OBSIDIAN_VAULT` | Obsidian vault | unset (no vault) |
-| `OBSIDIAN_FOLDER` | Folder inside the vault | `Kindle` |
-| `KINDLE_ACT_ON_COMMANDS` | Do @commands after a sync | `true`; `false` makes Claude offer instead |
-| `KINDLE_AUTO_FILE` | File @todo, @quote and @project during sync | `true`; `false` leaves them to Claude |
-| `KINDLE_LINK_NOTES` | Link highlights to your notes | `true` |
-| `KINDLE_LINK_EXCLUDE` | Folders never linked or searched | unset; comma-separated folders |
-| `KINDLE_BROWSER_PATH` | Browser executable | unset; Chrome or Edge is found automatically |
-| `KINDLE_MCP_DB` | | `$KINDLE_MCP_HOME/kindle.db` |
-| `KINDLE_ON_PENDING` | | unset; same as `sync --on-pending` |
-| `KINDLE_REQUEST_DELAY` | | `1.5` seconds between Amazon pages |
-| `KINDLE_SYNC_BUDGET_MS` | | `40000`; how long one MCP sync call may fetch |
-| `KINDLE_NOTEBOOK_BASE` | | `https://read.amazon.com` |
+1. The app: the extension's settings in Claude Desktop, or environment variables (a cron line,
+   `claude mcp add -e`).
+2. The settings file, `~/.kindle-mcp/config.json`, which every client reads. Set it with
+   `kindle_set_vault` ("Use ~/Documents/Notes as my Kindle vault") or `kindle-mcp config set KEY
+   VALUE`; `kindle-mcp config` shows each setting and where it comes from, and so does
+   `kindle_status`. The plugin has no settings screen, so inside the plugin (Claude Code and
+   Cowork start it with `CLAUDE_PLUGIN_ROOT` set) the file also beats the bundle's built-in
+   defaults.
+3. The defaults below.
+
+| Variable | Desktop setting | Settings file key | Default |
+|---|---|---|---|
+| `KINDLE_MCP_HOME` | Data folder | | `~/.kindle-mcp` |
+| `OBSIDIAN_VAULT` | Obsidian vault | `obsidian_vault` (or `vault`) | unset (no vault) |
+| `OBSIDIAN_FOLDER` | Folder inside the vault | `obsidian_folder` (or `folder`) | `Kindle` |
+| `KINDLE_ACT_ON_COMMANDS` | Do @commands after a sync | `act_on_commands` | `true`; `false` makes Claude offer instead |
+| `KINDLE_AUTO_FILE` | File @todo, @quote and @project during sync | `auto_file` | `true`; `false` leaves them to Claude |
+| `KINDLE_LINK_NOTES` | Link highlights to your notes | `link_notes` | `true` |
+| `KINDLE_LINK_EXCLUDE` | Folders never linked or searched | `link_exclude` | unset; comma-separated folders |
+| `KINDLE_BROWSER_PATH` | Browser executable | `browser_path` | unset; Chrome or Edge is found automatically |
+| `KINDLE_MCP_DB` | | | `$KINDLE_MCP_HOME/kindle.db` |
+| `KINDLE_ON_PENDING` | | | unset; same as `sync --on-pending` |
+| `KINDLE_REQUEST_DELAY` | | | `1.5` seconds between Amazon pages |
+| `KINDLE_SYNC_BUDGET_MS` | | | `40000`; how long one MCP sync call may fetch |
+| `KINDLE_NOTEBOOK_BASE` | | | `https://read.amazon.com` |
+
 
 ## Privacy and data
 
 - `~/.kindle-mcp/kindle.db`: your highlights, notes and the @command queue.
 - `~/.kindle-mcp/session.json`: Amazon session cookies. Treat it like a password.
+- `~/.kindle-mcp/config.json`: your settings (the vault path and the like), if you saved any.
 - `~/.kindle-mcp/vault-index-*.db`: a cache of your vault's note names, aliases and the start of each
   note's text, for linking and search. Safe to delete; it is rebuilt.
 - Claude sees what the tools return: highlights, and with a vault, snippets of your notes from
@@ -351,8 +401,9 @@ variables.
   a sync through Claude.
 - `first_seen` is when the sync first saw a highlight, not when you made it; the cloud page does not
   expose per-highlight times (clippings does).
-- Everything runs where the store lives. Claude on the web and on mobile can't reach a stdio server;
-  an HTTP transport is a small later addition, the tool code is transport-free.
+- Everything runs where the store lives. Claude on the web and on mobile can't reach a stdio server,
+  and chat ignores a plugin's local server; an HTTP transport is a small later addition, the tool
+  code is transport-free.
 
 ## How the notebook is read
 
@@ -385,7 +436,13 @@ npm install
 npm test                        # vitest; fixtures are scrubbed real page markup
 npm run build                   # dist/, then `node dist/cli.js --help`
 npm run build && npm run mcpb   # the Desktop bundle, checked by unpacking it and replaying a host handshake
+npm run render-plugin           # plugin/, .claude-plugin/ and skills/ from package.json and src/prompts
+npm run build && npm run render-plugin -- --dev   # build/plugin-dev: the plugin running this checkout
+claude --plugin-dir build/plugin-dev              # try it; `claude plugin validate plugin` checks it
 ```
+
+The plugin's files are generated; edit `src/plugin.ts` or `src/prompts/*.md` instead, and a test fails
+until they're rendered again.
 
 When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, save a scrubbed copy of the HTML
 under `tests/fixtures`, fix `src/notebook/selectors.ts`, add a test. Never commit `.har`, `.db`,

@@ -1,7 +1,7 @@
 /** Paths and settings. Everything is overridable by environment variable. */
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { normalizeFolder } from "./vault/write.js";
 
@@ -29,7 +29,31 @@ export interface Config {
   linkExclude: string[];
   /** How long one kindle_sync call may spend before returning a partial result (KINDLE_SYNC_BUDGET_MS). */
   syncBudgetMs: number;
+  /** `<home>/config.json`: settings kept for every client; the environment overrides each one. */
+  settingsPath: string;
+  /** Where each file-backed setting came from. */
+  sources: Record<SettingKey, SettingSource>;
+  /** Started by a Claude plugin (CLAUDE_PLUGIN_ROOT is set): no settings screen, the file decides. */
+  inPlugin: boolean;
 }
+
+/**
+ * Settings that can live in `<data folder>/config.json`, so every client (the Desktop extension,
+ * the plugin in Claude Code and Cowork, the command line, cron) shares them. Keys are the Desktop
+ * extension's setting names; each has an environment variable that overrides it.
+ */
+export const SETTING_ENV = {
+  obsidian_vault: "OBSIDIAN_VAULT",
+  obsidian_folder: "OBSIDIAN_FOLDER",
+  act_on_commands: "KINDLE_ACT_ON_COMMANDS",
+  auto_file: "KINDLE_AUTO_FILE",
+  link_notes: "KINDLE_LINK_NOTES",
+  link_exclude: "KINDLE_LINK_EXCLUDE",
+  browser_path: "KINDLE_BROWSER_PATH",
+} as const;
+export type SettingKey = keyof typeof SETTING_ENV;
+export type SettingSource = "environment" | "config file" | "default";
+export type SettingsFile = Partial<Record<SettingKey, string | boolean | string[]>>;
 
 /**
  * A setting as the host passed it, or null when it is unset or still an unexpanded placeholder.
@@ -45,22 +69,100 @@ function setting(env: NodeJS.ProcessEnv, key: string, kind: "path" | "shell" = "
   return v;
 }
 
-/** A true/false setting; unset, placeholder or unrecognised values keep the default. */
-function flag(env: NodeJS.ProcessEnv, key: string, fallback: boolean): boolean {
-  const v = setting(env, key, "shell")?.toLowerCase();
-  if (v && /^(0|false|no|off)$/.test(v)) return false;
-  if (v && /^(1|true|yes|on)$/.test(v)) return true;
-  return fallback;
+/** An absolute path, with a leading `~` meaning the home folder. */
+export function expand(p: string): string {
+  return resolve(p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
 }
 
-function expand(p: string): string {
-  return resolve(p.startsWith("~") ? join(homedir(), p.slice(1)) : p);
+/** The settings file, or {} when there is none. An unreadable one is ignored with a warning (stderr). */
+export function readSettingsFile(path: string): SettingsFile {
+  if (!existsSync(path)) return {};
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a JSON object");
+    const out: SettingsFile = {};
+    for (const key of Object.keys(SETTING_ENV) as SettingKey[]) {
+      const v = (data as Record<string, unknown>)[key];
+      if (typeof v === "string" || typeof v === "boolean" || (Array.isArray(v) && v.every((x) => typeof x === "string"))) out[key] = v;
+    }
+    return out;
+  } catch (e) {
+    console.error(`kindle-mcp: ignoring ${path}: ${(e as Error).message}`);
+    return {};
+  }
+}
+
+/** Sets (or, with null, removes) keys in the settings file; the rest of the file is kept. */
+export function writeSettingsFile(path: string, patch: Partial<Record<SettingKey, string | boolean | string[] | null>>): SettingsFile {
+  const next: SettingsFile = { ...readSettingsFile(path) };
+  for (const [k, v] of Object.entries(patch) as Array<[SettingKey, string | boolean | string[] | null]>) {
+    if (v === null) delete next[k];
+    else next[k] = v;
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
+  renameSync(tmp, path);
+  return next;
+}
+
+/** true/false/1/0/yes/no/on/off; null for anything else. */
+export function parseOnOff(value: string): boolean | null {
+  const v = value.trim().toLowerCase();
+  if (/^(0|false|no|off)$/.test(v)) return false;
+  if (/^(1|true|yes|on)$/.test(v)) return true;
+  return null;
+}
+
+/** The value in effect for a setting that can live in the settings file. */
+export function settingValue(cfg: Config, key: SettingKey): string | boolean | string[] | null {
+  switch (key) {
+    case "obsidian_vault": return cfg.obsidianVault;
+    case "obsidian_folder": return cfg.obsidianFolder;
+    case "act_on_commands": return cfg.actOnCommands;
+    case "auto_file": return cfg.autoFile;
+    case "link_notes": return cfg.linkNotes;
+    case "link_exclude": return cfg.linkExclude;
+    case "browser_path": return cfg.browserPath;
+  }
+}
+
+/** Null when the folder is an Obsidian vault kindle-mcp may write to, else why not. */
+export function vaultProblem(path: string): string | null {
+  // A relative path would resolve against wherever the server happened to start.
+  if (!isAbsolute(path.trim()) && !path.trim().startsWith("~")) return `Give the vault's full path (starting with / or ~), not ${path}.`;
+  const full = expand(path.trim());
+  if (!existsSync(full) || !statSync(full).isDirectory()) return `There is no folder at ${full}.`;
+  if (!existsSync(join(full, ".obsidian"))) {
+    return `${full} isn't an Obsidian vault: it has no .obsidian folder. Give the vault's top folder (open it in Obsidian once if it's new).`;
+  }
+  return null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const home = expand(setting(env, "KINDLE_MCP_HOME") ?? join(homedir(), ".kindle-mcp"));
-  const vault = setting(env, "OBSIDIAN_VAULT");
-  const browser = setting(env, "KINDLE_BROWSER_PATH");
+  const settingsPath = join(home, "config.json");
+  const file = readSettingsFile(settingsPath);
+  const sources = {} as Record<SettingKey, SettingSource>;
+  // A plugin's bundle has no settings screen, so what it passes are its defaults: a value saved in
+  // the settings file beats them. Everywhere else the environment is the user's own choice and wins.
+  const inPlugin = setting(env, "CLAUDE_PLUGIN_ROOT") !== null;
+  /** The environment value, else the file's (as text), else null; records which one it was. */
+  const pick = (key: SettingKey, kind: "path" | "shell" = "path"): string | null => {
+    const v = file[key];
+    const fromFile = (Array.isArray(v) ? v.join(",") : typeof v === "boolean" ? String(v) : v?.trim()) || null;
+    const fromEnv = setting(env, SETTING_ENV[key], kind);
+    if (fromEnv !== null && !(inPlugin && fromFile)) {
+      sources[key] = "environment";
+      return fromEnv;
+    }
+    sources[key] = fromFile ? "config file" : "default";
+    return fromFile;
+  };
+  /** A true/false setting; unset, placeholder or unrecognised values keep the default. */
+  const onOff = (key: SettingKey, fallback: boolean): boolean => parseOnOff(pick(key, "shell") ?? "") ?? fallback;
+  const vault = pick("obsidian_vault");
+  const browser = pick("browser_path");
   const delay = parseFloat(setting(env, "KINDLE_REQUEST_DELAY") ?? "1.5");
   return {
     home,
@@ -69,15 +171,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sessionPath: join(home, "session.json"),
     notebookBase: (setting(env, "KINDLE_NOTEBOOK_BASE") ?? "https://read.amazon.com").replace(/\/+$/, ""),
     obsidianVault: vault ? expand(vault) : null,
-    obsidianFolder: normalizeFolder(setting(env, "OBSIDIAN_FOLDER") ?? "Kindle"),
+    obsidianFolder: normalizeFolder(pick("obsidian_folder") ?? "Kindle"),
     requestDelayMs: Math.round((Number.isFinite(delay) ? delay : 1.5) * 1000),
     onPending: setting(env, "KINDLE_ON_PENDING", "shell"),
     browserPath: browser ? expand(browser) : null,
-    actOnCommands: flag(env, "KINDLE_ACT_ON_COMMANDS", true),
-    autoFile: flag(env, "KINDLE_AUTO_FILE", true),
-    linkNotes: flag(env, "KINDLE_LINK_NOTES", true),
-    linkExclude: (setting(env, "KINDLE_LINK_EXCLUDE", "shell") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    actOnCommands: onOff("act_on_commands", true),
+    autoFile: onOff("auto_file", true),
+    linkNotes: onOff("link_notes", true),
+    linkExclude: (pick("link_exclude", "shell") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
     syncBudgetMs: Math.max(1, Number(setting(env, "KINDLE_SYNC_BUDGET_MS", "shell")) || 40_000),
+    settingsPath,
+    sources,
+    inPlugin,
   };
 }
 
