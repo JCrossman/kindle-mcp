@@ -13,7 +13,8 @@ My Clippings.txt (device, optional) ─────┘                 ├─►
 ```
 
 Everything runs on your machine. Nothing is sent anywhere except requests to Amazon for your own
-notebook. The command line needs Node 22.13 or newer; the Claude Desktop extension uses Claude's own.
+notebook, and what your Claude client sends to Claude as part of a conversation (tool results
+included). The command line needs Node 22.13 or newer; the Claude Desktop extension uses Claude's own.
 
 ## Other ways to run it
 

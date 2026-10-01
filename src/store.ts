@@ -640,6 +640,18 @@ export class Store {
       .run(nowIso(), ...keys.map((k) => (stats as Record<string, string | number>)[k]), runId);
   }
 
+  /**
+   * True once a sync from Amazon has read the library and finished without an error. A clippings
+   * import doesn't count, nor does a first sync cut off by its deadline before it saw a book.
+   */
+  hasCloudSync(): boolean {
+    return Boolean(
+      this.db
+        .prepare("SELECT 1 FROM sync_runs WHERE source='cloud' AND finished_at IS NOT NULL AND error IS NULL AND books_seen > 0 LIMIT 1")
+        .get(),
+    );
+  }
+
   status(): {
     books: number;
     highlights: number;

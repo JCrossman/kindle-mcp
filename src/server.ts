@@ -820,14 +820,15 @@ export function createServer(cfg: Config): McpServer {
           }
         }
         const mismatch = vaultMismatch(cfg);
+        const synced = store.hasCloudSync();
         const next = !session
           ? "The user isn't signed in to Amazon yet: offer kindle_login (it opens a sign-in window; not in a scheduled " +
             "run). Once they've signed in, call kindle_status again for the next step."
-          : !s.highlights && !cfg.obsidianVault
+          : !synced && !cfg.obsidianVault
             ? "Before the first sync, ask the user whether they keep notes in Obsidian. If they do, ask for their " +
               "vault's top folder and save it with kindle_set_vault, then call kindle_sync. If they don't, call " +
               "kindle_sync: results then come back in the chat."
-            : !s.highlights
+            : !synced
               ? "Call kindle_sync to pull the user's highlights."
               : s.pending_commands
               ? cfg.actOnCommands

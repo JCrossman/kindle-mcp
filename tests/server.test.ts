@@ -13,6 +13,7 @@ import { createServer, parseSince, routePendingPrompt, serverInstructions, weekl
 import { saveSession } from "../src/notebook/session.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";
+import { importClippings } from "../src/sync.js";
 import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
 
 const FX = join(__dirname, "fixtures");
@@ -359,6 +360,15 @@ describe("MCP server", () => {
     next = (await call(client, "kindle_status")).data.next_step;
     expect(next).toMatch(/whether they keep notes in Obsidian/);
     expect(next).toMatch(/kindle_set_vault/);
+
+    // Highlights from a clippings file, or a first sync cut off before it read the library, aren't a first sync.
+    const store = new Store(cfg.dbPath);
+    importClippings(store, join(FX, "My Clippings.txt"), () => {});
+    store.finishRun(store.startRun("cloud"));
+    store.close();
+    const status = (await call(client, "kindle_status")).data;
+    expect(status.highlights).toBeGreaterThan(0);
+    expect(status.next_step).toMatch(/whether they keep notes in Obsidian/);
 
     const vault = join(home, "Notes");
     mkdirSync(join(vault, ".obsidian"), { recursive: true });

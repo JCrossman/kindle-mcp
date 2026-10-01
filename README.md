@@ -2,8 +2,8 @@
 
 Read on your Kindle, and let Claude do the rest.
 
-- **Your highlights land in Obsidian.** Every highlight and note you make on the Kindle is added to
-  your vault, one note per book, linked to the notes you already have.
+- **Your highlights land in Obsidian.** If you use Obsidian, the highlights and notes from your
+  Kindle Store books are added to your vault, one note per book, linked to the notes you already have.
 - **Your notes become requests.** Type a short note on a highlight, like `@research is this still
   true?`, `@post`, `@todo email Sam` or `@roadmap`. Claude researches the question, drafts the
   post, files the task, or adds the highlight to your Roadmap note, then saves the result in
