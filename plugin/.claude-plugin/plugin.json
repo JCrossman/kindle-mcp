@@ -1,6 +1,6 @@
 {
   "name": "kindle",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Your Kindle highlights and notes as tools for Claude, and an Obsidian vault that keeps itself linked: the kindle-mcp server, plus skills to set it up, sync on a schedule, carry out @commands and write a weekly brief.",
   "author": {
     "name": "Jeremy Crossman",
@@ -17,5 +17,5 @@
     "claude",
     "obsidian"
   ],
-  "mcpServers": "https://github.com/JCrossman/kindle-mcp/releases/download/v1.3.0/kindle-mcp-server-1.3.0.mcpb"
+  "mcpServers": "https://github.com/JCrossman/kindle-mcp/releases/download/v1.3.1/kindle-mcp-server-1.3.1.mcpb"
 }

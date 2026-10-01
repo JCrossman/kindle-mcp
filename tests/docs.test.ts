@@ -29,30 +29,39 @@ describe("docs stay in sync with COMMANDS", () => {
     expect(body).toBe(routePendingPrompt());
     expect(skill.startsWith("---\nname: kindle-router\n")).toBe(true);
   });
-  it("README names every tool the server offers, no tool it lacks, and every setting it reads", async () => {
+  it("the developer guide names every tool the server offers and every setting it reads; no doc names a tool it lacks", async () => {
+    const guide = readFileSync(join(root, "docs", "DEVELOPERS.md"), "utf8");
     const readme = readFileSync(join(root, "README.md"), "utf8");
     const [clientT, serverT] = InMemoryTransport.createLinkedPair();
     await createServer(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) })).connect(serverT);
     const client = new Client({ name: "docs", version: "0" });
     await client.connect(clientT);
     const tools = (await client.listTools()).tools.map((t) => t.name);
-    for (const t of tools) expect(readme).toContain(`\`${t}\``);
+    for (const t of tools) expect(guide).toContain(`\`${t}\``);
     // And the other way round: a renamed tool must not leave the routine prompt or a table behind.
     const known = [...tools, ...(await client.listPrompts()).prompts.map((p) => p.name)];
-    const shipped = readme.split("\n## Next\n")[0]; // Next names tools that don't exist yet
-    for (const [name] of shipped.matchAll(/\bkindle_[a-z_]+\b/g)) expect(known).toContain(name);
+    const shipped = guide.split("\n## Next\n")[0]; // Next names tools that don't exist yet
+    for (const text of [readme, shipped]) for (const [name] of text.matchAll(/\bkindle_[a-z_]+\b/g)) expect(known).toContain(name);
     const config = readFileSync(join(root, "src", "config.ts"), "utf8");
-    for (const [, key] of config.matchAll(/setting\(env, "([A-Z_]+)"/g)) expect(readme).toContain(`\`${key}\``);
+    for (const [, key] of config.matchAll(/setting\(env, "([A-Z_]+)"/g)) expect(guide).toContain(`\`${key}\``);
     for (const [name, key] of Object.entries(SETTING_ENV)) {
-      expect(readme).toContain(`\`${key}\``);
-      expect(readme).toContain(`\`${name}\``); // the config file key
+      expect(guide).toContain(`\`${key}\``);
+      expect(guide).toContain(`\`${name}\``); // the config file key
     }
     await client.close();
   });
-  it("README and CLAUDE.md carry no account totals", () => {
-    for (const f of ["README.md", "CLAUDE.md"]) {
+  it("README, the developer guide and CLAUDE.md carry no account totals", () => {
+    for (const f of ["README.md", join("docs", "DEVELOPERS.md"), "CLAUDE.md"]) {
       const text = readFileSync(join(root, f), "utf8");
       expect(text).not.toMatch(/\b\d+ books?\b|\b\d+ (?:highlights|annotations)\b/);
+    }
+  });
+  it("the README speaks to readers: developer talk stays in its last section", () => {
+    const readme = readFileSync(join(root, "README.md"), "utf8");
+    const [forReaders, last] = readme.split("\n## For developers\n");
+    expect(last).toMatch(/docs\/DEVELOPERS\.md/);
+    for (const word of [/Claude Code/, /\bnpm\b/, /\bcron\b/, /\bMCP\b/, /\bterminal\b/i, /SQLite/, /\bstdio\b/, /command line/i, /(?<!Obsidian )\bplugins?\b/]) {
+      expect(forReaders, `README names ${word}`).not.toMatch(word);
     }
   });
 

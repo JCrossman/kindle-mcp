@@ -49,7 +49,8 @@ export function serverInstructions(): string {
     "kindle_search_highlights to bring their own reading into a conversation and kindle_get_new_since to see what " +
     `they have been reading lately. Notes on the Kindle can carry @commands (${tagList}): kindle_sync files ` +
     "@todo, @quote and @project into the vault itself and returns the @post and @research commands left for you, " +
-    "with an instruction saying whether to do them now; save each result with kindle_complete_command. " +
+    "with an instruction saying whether to do them now; save each result with kindle_complete_command. To set " +
+    "up, call kindle_status and follow its next_step. " +
     `${TRUNCATED_HINT} Always cite book title and location when quoting a highlight.`
   );
 }
@@ -786,10 +787,12 @@ export function createServer(cfg: Config): McpServer {
     {
       title: "Store status",
       description:
-        "Store counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon " +
-        "session is saved and when, the data folder and version, the Obsidian vault and settings in effect, tags the " +
-        "user pointed at notes and tags waiting in Unrouted, and a `next_step` suggestion. `vault_mismatch` means " +
-        "this app and the other Claude apps write to different vaults: ask the user which one is right.",
+        "Call this first when the user asks to set up their Kindle, or whether it's working, and follow its " +
+        "`next_step`: it walks setup through sign-in, the Obsidian vault and the first sync. Also returns store " +
+        "counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon session " +
+        "is saved and when, the data folder and version, the Obsidian vault and settings in effect, tags the user " +
+        "pointed at notes and tags waiting in Unrouted. `vault_mismatch` means this app and the other Claude apps " +
+        "write to different vaults: ask the user which one is right.",
       annotations: READ,
     },
     async () =>
@@ -818,10 +821,15 @@ export function createServer(cfg: Config): McpServer {
         }
         const mismatch = vaultMismatch(cfg);
         const next = !session
-          ? "The user isn't signed in to Amazon yet: offer kindle_login (it opens a sign-in window; not in a scheduled run), then kindle_sync."
-          : !s.highlights
-            ? "Call kindle_sync to pull the user's highlights."
-            : s.pending_commands
+          ? "The user isn't signed in to Amazon yet: offer kindle_login (it opens a sign-in window; not in a scheduled " +
+            "run). Once they've signed in, call kindle_status again for the next step."
+          : !s.highlights && !cfg.obsidianVault
+            ? "Before the first sync, ask the user whether they keep notes in Obsidian. If they do, ask for their " +
+              "vault's top folder and save it with kindle_set_vault, then call kindle_sync. If they don't, call " +
+              "kindle_sync: results then come back in the chat."
+            : !s.highlights
+              ? "Call kindle_sync to pull the user's highlights."
+              : s.pending_commands
               ? cfg.actOnCommands
                 ? "Call kindle_get_pending_commands and do them, saving each with kindle_complete_command."
                 : `Tell the user ${s.pending_commands} highlight(s) have @commands waiting, and offer to do them.`
@@ -858,10 +866,10 @@ export function createServer(cfg: Config): McpServer {
     {
       title: "Set the Obsidian vault",
       description:
-        "Remember which Obsidian vault kindle-mcp writes to, for every Claude app and the command line on this " +
-        "computer (saved in the data folder's config.json). Use when the user tells you where their vault is, for " +
-        "example in Cowork or Claude Code, which have no settings screen for it. The folder must be an Obsidian " +
-        "vault: it contains a .obsidian folder. Where an app has its own vault setting filled in, that one still wins.",
+        "Remember which Obsidian vault kindle-mcp writes to, for every Claude app on this computer. Use it when the " +
+        "user tells you where their vault is: during setup, or to change it. The folder must be an Obsidian vault " +
+        "(it contains a .obsidian folder). If this app's own vault setting is filled in, that one still wins here, " +
+        "and the result says so.",
       inputSchema: {
         path: z.string().min(1).describe("The vault's top folder, e.g. ~/Documents/Notes"),
         folder: z.string().optional().describe("Folder inside the vault for the Kindle notes; default Kindle"),

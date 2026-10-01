@@ -1,11 +1,17 @@
 # kindle-mcp
 
-Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked. Sync engine
+A reading assistant. Readers highlight and type short notes on the Kindle; the highlights land in their Obsidian vault,
+linked to their own notes, and Claude carries out the notes (research, drafts, tasks, a note for a topic) in the
+background. Readers use the Claude desktop app's chat with the extension, plus a daily routine; everything else is
+plumbing or for developers. Keep reader-facing text free of it.
+
+Under the hood: Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked. Sync engine
 (fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP server over
 stdio (17 tools, 2 prompts), shipped on npm, as a Claude Desktop extension (.mcpb), and as a plugin for Claude Code
 and Cowork (the same .mcpb plus four skills). With a vault, each sync appends new highlights to book notes linked to
 the user's notes, files @todo/@quote/@project and any other tag named after a note itself, and hands @post/@research
-to the agent, which saves them with `kindle_complete_command`. See README.md.
+to the agent, which saves them with `kindle_complete_command`. README.md is for readers; docs/DEVELOPERS.md has
+everything else (other installs, tools, settings, how the notebook is read, building and releasing).
 
 ## Setup
     npm install && npm test          # vitest; fixtures are scrubbed real page markup
@@ -51,6 +57,8 @@ to the agent, which saves them with `kindle_complete_command`. See README.md.
 
 ## Rules
 - Never commit `.har`, `.db`, `session.json`, or `doctor-*.html`; they hold highlight text and session state.
+- The README speaks to readers in the Claude desktop app: no Claude Code, npm, cron, MCP or plugin talk before its
+  last section (a docs test checks). Developer material goes in docs/DEVELOPERS.md, which names every tool and setting.
 - `plugin/`, `.claude-plugin/` and `skills/` are generated: edit `src/plugin.ts` or `src/prompts/*.md`, then
   `npm run render-plugin` (a drift test fails otherwise). No `bin/` in the plugin: chat and Cowork refuse it.
 - Every `.mcpb` setting needs a default (the build checks): Cowork skips a bundle whose settings lack one.
@@ -97,6 +105,11 @@ to the agent, which saves them with `kindle_complete_command`. See README.md.
   drew on the related note read in full with `kindle_read_note`; the bundle entry saved the extension's vault to
   `config.json` once, left it alone on a later start with another vault, and reported the mismatch. Not yet checked
   live: 1.3.0 in the Desktop Code tab, routines and Cowork.
+- 1.3.1 (2026-10-01): headless Claude Code with the server set up like the extension (no plugin), against the local
+  stand-in: told only "Set up my Kindle." with a saved sign-in and no vault, it called `kindle_status` and asked
+  whether the reader keeps notes in Obsidian; told the vault in a second run, it saved it with `kindle_set_vault`,
+  ran the first sync, filed the @project and wrote the @post. The 1.3.0 plugin installed from the marketplace (17
+  tools, connected). Not yet checked live: the reader setup in the Desktop chat tab.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.
