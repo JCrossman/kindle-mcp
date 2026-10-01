@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { loadConfig, readSettingsFile, vaultProblem, writeSettingsFile } from "../src/config.js";
+import { loadConfig, readSettingsFile, seedSharedVault, vaultMismatch, vaultProblem, writeSettingsFile } from "../src/config.js";
 
 // A developer's own ~/.kindle-mcp/config.json must not leak into these tests.
 beforeEach(() => {
@@ -136,6 +136,33 @@ describe("loadConfig", () => {
     writeFileSync(path, "\n"); // empty: nothing to keep
     writeSettingsFile(path, { obsidian_folder: "Y" });
     expect(readSettingsFile(path)).toEqual({ obsidian_folder: "Y" });
+  });
+
+  it("saves the app's own vault for the other apps once, and reports when they differ", () => {
+    const home = mkdtempSync(join(tmpdir(), "kindle-cfg-"));
+    const vault = join(home, "Vault");
+    const other = join(home, "Other");
+    mkdirSync(join(vault, ".obsidian"), { recursive: true });
+    mkdirSync(join(other, ".obsidian"), { recursive: true });
+    const env = { KINDLE_MCP_HOME: home, OBSIDIAN_VAULT: vault };
+    expect(seedSharedVault(loadConfig({ ...env, CLAUDE_PLUGIN_ROOT: "/plugins/kindle" }))).toBe(false); // a plugin's vault comes from the file
+    expect(seedSharedVault(loadConfig({ ...env, OBSIDIAN_VAULT: join(home, "NotAVault") }))).toBe(false);
+    expect(existsSync(join(home, "config.json"))).toBe(false);
+
+    const cfg = loadConfig(env);
+    expect(vaultMismatch(cfg)).toBeNull();
+    expect(seedSharedVault(cfg)).toBe(true);
+    expect(readSettingsFile(join(home, "config.json")).obsidian_vault).toBe(vault);
+    expect(seedSharedVault(loadConfig({ ...env, OBSIDIAN_VAULT: other }))).toBe(false); // never replaces a saved vault
+    expect(readSettingsFile(join(home, "config.json")).obsidian_vault).toBe(vault);
+
+    expect(vaultMismatch(loadConfig(env))).toBeNull();
+    expect(vaultMismatch(loadConfig({ ...env, OBSIDIAN_VAULT: `${vault}/` }))).toBeNull(); // the same folder, written differently
+    expect(vaultMismatch(loadConfig({ ...env, OBSIDIAN_VAULT: other }))).toMatchObject({ this_app: other, saved: vault });
+    expect(vaultMismatch(loadConfig({ ...env, OBSIDIAN_VAULT: other, CLAUDE_PLUGIN_ROOT: "/plugins/kindle" }))).toBeNull();
+    // With a vault saved, another app's folder is never paired with it.
+    expect(seedSharedVault(loadConfig({ ...env, OBSIDIAN_VAULT: other, OBSIDIAN_FOLDER: "Reading" }))).toBe(false);
+    expect(readSettingsFile(join(home, "config.json"))).toEqual({ obsidian_vault: vault });
   });
 
   it("accepts only an Obsidian vault as the vault", () => {

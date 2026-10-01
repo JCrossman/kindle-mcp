@@ -105,8 +105,16 @@ export const COMMANDS: CommandSpec[] = [
 ];
 
 export const UNKNOWN_ACTION =
-  "Unknown tag: kindle_complete_command files it to Unrouted with the tag preserved (without a vault, mention it in " +
-  "your reply and call kindle_mark_command_done). Never invent behaviour for a tag that is not in the table.";
+  "Not a built-in command: the sync files it into the note named or aliased like the tag (or the note the user chose " +
+  "with kindle_teach_tag), else into Unrouted; kindle_complete_command does the same. Without a vault, mention it in " +
+  "your reply and call kindle_mark_command_done. Never invent behaviour for a tag that is not in the table, and never " +
+  "call kindle_teach_tag without the user's answer.";
+
+/** Any tag no command owns: the README and the router prompt describe it after the built-in ones. */
+const OTHER_TAG = "any other `@word`";
+const OTHER_RESULT =
+  "The quote and note under `From Kindle` in your note named or aliased `word`, or the note you named for it once. " +
+  "No such note, or two: `Inbox/Unrouted.md`, and Claude asks you where it goes.";
 
 export interface Command {
   tag: string;
@@ -192,6 +200,7 @@ export function commandsTable(): string {
     (c) =>
       `| \`@${c.tag}\` | ${c.aliases.map((a) => `\`@${a}\``).join(", ")} | ${argLabel(c)} | ${c.meaning} | ${doneByLabel(c)} | ${c.result} |`,
   );
+  rows.push(`| ${OTHER_TAG} | | none | This belongs with my note \`word\`. | the sync | ${OTHER_RESULT} |`);
   return ["| Tag | Alias | Argument | You mean | Done by | What happens |", "|---|---|---|---|---|---|", ...rows].join("\n");
 }
 
@@ -201,5 +210,6 @@ export function actionsTable(): string {
     (c) =>
       `| \`@${c.tag}\` | ${c.aliases.map((a) => `\`@${a}\``).join(", ")} | ${argLabel(c)} | ${c.doneBy === "sync" ? "the sync, when a vault is set" : "you"} | ${c.action} |`,
   );
+  rows.push(`| ${OTHER_TAG} | | none | the sync, when a vault is set | ${UNKNOWN_ACTION} |`);
   return ["| Tag | Alias | Argument | Done by | Action while pending |", "|---|---|---|---|---|", ...rows].join("\n");
 }

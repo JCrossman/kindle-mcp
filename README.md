@@ -19,8 +19,10 @@ notebook. The command line needs Node 22.13 or newer; the Claude Desktop extensi
 
 ## Setup
 
-Pick one: the plugin for Claude Code and Cowork, the extension for Claude Desktop's chat, or the
-command line alone. They all keep their data and settings in `~/.kindle-mcp`, so you can mix them.
+One server, two ways to install it: the plugin for Claude Code, routines and Cowork, and the
+extension for Claude Desktop's chat (chat can't run a plugin's server). Both, and the command line,
+share `~/.kindle-mcp`: the same highlights, the same Amazon sign-in, the same vault setting. Use
+whichever your apps need; installing both is fine.
 
 ### Claude Code and Cowork: the plugin
 
@@ -94,10 +96,11 @@ awake.
    Custom, uses less.
 4. Click **Create**, then **Run now**, and answer each permission prompt with **Always allow** for
    `kindle_sync`, `kindle_get_pending_commands`, `kindle_get_command_context`,
-   `kindle_complete_command`, `kindle_search_vault` and `kindle_status`, plus WebSearch and
-   WebFetch if you use @research. A scheduled run can't answer a prompt: it waits, and the runs
-   after it are skipped until you do. Don't always-allow `kindle_login` (it opens a window) or
-   `kindle_link_existing_highlights` (it changes older notes, which is your call).
+   `kindle_complete_command`, `kindle_search_vault`, `kindle_read_note` and `kindle_status`, plus
+   WebSearch and WebFetch if you use @research. A scheduled run can't answer a prompt: it waits, and
+   the runs after it are skipped until you do. Don't always-allow `kindle_login` (it opens a
+   window), `kindle_link_existing_highlights` (it changes older notes), `kindle_teach_tag` or
+   `kindle_set_vault`: those are your call.
 5. If that run can't find the Kindle tools: with the plugin, check it's enabled (`/plugin`); with
    only the extension, turn **Kindle highlights** on in a Code session's **+** menu, under
    **Connectors**, or install the plugin.
@@ -116,7 +119,8 @@ each one with kindle_complete_command.
 This runs unattended: don't ask me anything and don't open the Amazon sign-in window. If the
 sync says I need to sign in, call kindle_get_pending_commands and still do anything waiting,
 then start the summary with "Kindle sign-in needed: say 'Sign me in to Kindle' when you're at
-your computer." If it offers to link older highlights, just mention it.
+your computer." If it offers to link older highlights, just mention it. If it lists tags it
+couldn't place, put its question in the summary and don't answer it yourself.
 
 Finish with a short summary: new highlights, what was filed where, the notes you wrote (by
 title), and anything that needs me.
@@ -204,11 +208,19 @@ Type these as a note on any highlight, on the Kindle:
 | `@todo` | `@t` | rest of line, required | Make this a task. The argument is the task text. | the sync | A checklist item in `Inbox/Todo.md` with the quote and a link to the highlight. |
 | `@project` | `@pr` | one word, required | This belongs to project `<name>`. | the sync | The quote and note under a `From Kindle` heading in your note named or aliased `<name>`, else in `Projects/<name>.md`. |
 | `@quote` | `@q` | none | Keep this as a quotable line. | the sync | The quote with title, author and location in `Inbox/Quotes.md`. |
+| any other `@word` | | none | This belongs with my note `word`. | the sync | The quote and note under `From Kindle` in your note named or aliased `word`, or the note you named for it once. No such note, or two: `Inbox/Unrouted.md`, and Claude asks you where it goes. |
 
 Paths are inside the Kindle folder of your vault (`Kindle` unless you change it). A line argument
-stops at the next tag, so `@todo email Sam @project netcare` is two commands. Unknown tags, a
-`@project` with no name, and a name that matches two notes go to `Inbox/Unrouted.md` with the
-reason. Editing the note on the Kindle re-opens only what changed. Without a vault, Claude does
+stops at the next tag, so `@todo email Sam @project netcare` is two commands. Editing the note on
+the Kindle re-opens only what changed.
+
+**Any other tag needs no setup.** `@roadmap` files into your note named or aliased `Roadmap`, the
+way `@project` does. If no note has that name, or two do, it waits in `Inbox/Unrouted.md`, and
+Claude asks you once where it belongs, with its best guess ("does @road mean your note
+'Roadmap'?"). Say yes and it's remembered: what was waiting moves there, and later ones file there
+too. Nothing is ever filed on a guess, and a tag never creates a note. A command typo (`@tood`) is
+pointed out, not guessed; fix the note on the Kindle and the next sync files it. A `@project` with
+no name also goes to Unrouted, with the reason. Without a vault, Claude does
 every command and puts the result in its reply. Add a command by adding a row to `COMMANDS` in
 `src/commands.ts`; the tool descriptions, the router prompt and this table all follow it.
 
@@ -250,7 +262,8 @@ What the sync files, each linked back to that exact highlight:
 
 `@project netcare` appends the quote under `## From Kindle` in your own `Netcare` note (or the note
 that lists `netcare` in its `aliases`), before any section that follows it. With no such note it
-creates `Kindle/Projects/netcare.md`.
+creates `Kindle/Projects/netcare.md`. Any other tag, like `@roadmap`, works the same way with your
+`Roadmap` note, but never creates one.
 
 `@post` and `@research` become their own notes, with frontmatter (`kindle-highlight`, `book`,
 `created`, `tags`), the quote with its link, your note as the angle or question, Claude's text with
@@ -323,7 +336,7 @@ highlights to my notes"), or run `kindle-mcp link-existing` to preview and add `
 | Tool | What it does |
 |---|---|
 | `kindle_sync` | Pull new highlights from Amazon, update the vault, return what is left with an instruction. |
-| `kindle_status` | Counts, the queue by tag, last sync, session, vault and settings (and where each comes from), and a next step. |
+| `kindle_status` | Counts, the queue by tag, last sync, session, vault and settings (and where each comes from), tags you pointed at notes, tags waiting in Unrouted, and a next step. |
 | `kindle_set_vault` | Save which Obsidian vault to use, for every client; only a folder with `.obsidian` in it. |
 | `kindle_login` | Open the one-time Amazon sign-in window. |
 | `kindle_list_books` | Books, most recently highlighted first. |
@@ -334,7 +347,9 @@ highlights to my notes"), or run `kindle-mcp link-existing` to preview and add `
 | `kindle_get_command_context` | One highlight with neighbours, related highlights, related vault notes and its own link. |
 | `kindle_complete_command` | Save one command's result into the vault and mark it done. |
 | `kindle_mark_command_done` | Mark commands done that were handled some other way. |
-| `kindle_search_vault` | Full-text search over your vault's notes, with paste-ready links. |
+| `kindle_search_vault` | Full-text search over your vault's notes, with paste-ready links and short excerpts. |
+| `kindle_read_note` | Read one of your notes in full, by name or path. Read-only; excluded and opted-out notes stay off-limits. |
+| `kindle_teach_tag` | On your word, point a tag at a note: what's waiting in Unrouted moves there, and later ones file there. |
 | `kindle_link_existing_highlights` | Preview, or on your yes apply, links in highlights exported before. |
 | `kindle_export_to_obsidian` | Update the vault from the store without contacting Amazon. |
 
@@ -355,6 +370,11 @@ Settings come from three places, and the first one set wins:
    Cowork start it with `CLAUDE_PLUGIN_ROOT` set) the file also beats the bundle's built-in
    defaults.
 3. The defaults below.
+
+The vault is one setting for every app. The first time the extension starts with its own vault set
+and no vault is saved yet, it saves its vault to the settings file, so the plugin, routines and the
+command line follow it. If the two ever differ, `kindle_status` and the sync say so (`vault_mismatch`);
+clear the extension's vault field to use the saved one everywhere.
 
 | Variable | Desktop setting | Settings file key | Default |
 |---|---|---|---|
@@ -380,9 +400,9 @@ Settings come from three places, and the first one set wins:
 - `~/.kindle-mcp/config.json`: your settings (the vault path and the like), if you saved any.
 - `~/.kindle-mcp/vault-index-*.db`: a cache of your vault's note names, aliases and the start of each
   note's text, for linking and search. Safe to delete; it is rebuilt.
-- Claude sees what the tools return: highlights, and with a vault, snippets of your notes from
-  `kindle_search_vault` and related notes. Folders you exclude and notes marked `kindle-link: false`
-  are never searched or returned.
+- Claude sees what the tools return: highlights, and with a vault, excerpts of your notes from
+  `kindle_search_vault` and related notes, and the whole notes it reads with `kindle_read_note`.
+  Folders you exclude and notes marked `kindle-link: false` are never searched, read or returned.
 - Nothing leaves your machine except requests to Amazon for your own notebook, and what your Claude
   client sends to Claude as part of the conversation.
 
@@ -406,6 +426,12 @@ Settings come from three places, and the first one set wins:
   code is transport-free.
 
 ## How the notebook is read
+
+Amazon has no public API for Kindle highlights. The sync calls the same addresses the notebook
+site's own page calls to load your library and each book's highlights, sends your saved sign-in, and
+reads the HTML those addresses answer with. No browser and no screenshots: a browser is used only to
+sign in. If Amazon changes that HTML, `kindle-mcp doctor` shows what changed, and
+`src/notebook/selectors.ts` is the one file to fix.
 
 Verified against live captures of the notebook and a full account sync (the original Python version,
 2026-09-21) and, for this TypeScript version, the plain-HTTP sync from Claude Desktop (2026-09-22).

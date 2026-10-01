@@ -17,7 +17,7 @@ says so.
 2. If `obsidian_vault` is set, call `kindle_export_to_obsidian` once. It adds new highlights to the vault and files @todo, @quote and @project itself, so those usually need nothing from you.
 3. Call `kindle_get_pending_commands` with `limit` 20. Work through the highlights one at a time, in the order returned.
 4. For each highlight, call `kindle_get_command_context` with its `id`. It returns the highlight and the note as typed, the commands still to do with their actions, the neighbouring and related highlights, and, with a vault, related notes with ready-made [[links]].
-5. Do each command in `commands` as its `action` says (the table below has them all).
+5. Do each command in `commands` as its `action` says (the table below has them all). Related notes are short excerpts: before writing @post or @research, read the two or three most relevant ones in full with `kindle_read_note`.
 6. Save each result:
    - With a vault: call `kindle_complete_command` with the highlight `id` and the `tag`; for @post and @research also a short `title`, your markdown as `content`, and the related notes worth linking as `related_notes`. It writes the note, links it to the highlight, and marks the command done.
    - Without a vault: put the result in your reply (or use your own notes or task tools), then call `kindle_mark_command_done` with the `id` (and the `tag` to close just one command).
@@ -34,8 +34,9 @@ says so.
 | `@todo` | `@t` | rest of line, required | the sync, when a vault is set | Create the task with the quote, book title and location attached: kindle_complete_command files it in the vault's task list. Without a vault, use your own task tool or list it in your reply, then call kindle_mark_command_done. |
 | `@project` | `@pr` | one word, required | the sync, when a vault is set | Attach the quote and note to that project: kindle_complete_command appends it to the vault note named or aliased `<name>`, or creates one. A missing project name goes to Unrouted with the reason. Without a vault, put it in your reply, then call kindle_mark_command_done. |
 | `@quote` | `@q` | none | the sync, when a vault is set | File it with attribution (title, author, location), no commentary: kindle_complete_command adds it to the vault's quote list. Without a vault, put it in your reply, then call kindle_mark_command_done. |
+| any other `@word` | | none | the sync, when a vault is set | Not a built-in command: the sync files it into the note named or aliased like the tag (or the note the user chose with kindle_teach_tag), else into Unrouted; kindle_complete_command does the same. Without a vault, mention it in your reply and call kindle_mark_command_done. Never invent behaviour for a tag that is not in the table, and never call kindle_teach_tag without the user's answer. |
 
-Unknown tags: `kindle_complete_command` files them to Unrouted with the tag preserved. Never invent behaviour for a tag that is not in the table.
+Other tags: the sync files a tag no command owns into the note named like it (or the note the user chose for it), else into Unrouted. Never invent behaviour for a tag that is not in the table. If a tool result carries `unknown_tags`, pass its question on; call `kindle_teach_tag` only with the user's answer.
 
 ## Rules
 

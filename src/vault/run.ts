@@ -11,7 +11,7 @@ import type { Config } from "../config.js";
 import { exportBook } from "../obsidian.js";
 import type { Store } from "../store.js";
 import { applyBackfill, planBackfill } from "./backfill.js";
-import { fileCommand, legacyAgentOutput, type FileContext } from "./file.js";
+import { fileCommand, legacyAgentOutput, type FileContext, type Suggestion } from "./file.js";
 import { VaultIndex } from "./index.js";
 import { Vault, VaultError } from "./write.js";
 
@@ -37,7 +37,9 @@ export interface VaultStepResult {
   /** Book notes deleted in Obsidian and left deleted. */
   deleted_book_notes: string[];
   filed: Array<{ tag: string; to: string; count: number }>;
-  unrouted: Array<{ tag: string; arg: string; reason: string }>;
+  unrouted: Array<{ tag: string; arg: string; reason: string; to: string; ambiguous?: string[]; gone?: string } & Suggestion>;
+  /** Tags no command or note answers to this time, and the one question to put to the user. */
+  unknown_tags?: { in: string; tags: string[]; ask_user: string };
   /** Commands a 1.0 router had already written up. */
   found_earlier: number;
   link_existing?: LinkExistingOffer | { applied: { blocks: number; links: number; conflicts: string[] } };
@@ -130,6 +132,43 @@ export function askUser(blocks: number, links: number): string {
   );
 }
 
+const quoted = (titles: string[]): string => {
+  const q = titles.map((t) => `"${t}"`);
+  return q.length > 1 ? `${q.slice(0, -1).join(", ")} or ${q[q.length - 1]}` : q[0];
+};
+
+/**
+ * One question about every tag this sync couldn't place, in words the agent passes on. Typos of a
+ * command are fixed on the Kindle; anything else waits for the user to name a note.
+ */
+export function askAboutTags(entries: VaultStepResult["unrouted"]): VaultStepResult["unknown_tags"] | undefined {
+  const byTag = new Map<string, VaultStepResult["unrouted"][number]>();
+  for (const e of entries) if (!byTag.has(e.tag)) byTag.set(e.tag, e);
+  if (!byTag.size) return undefined;
+  const where = [...byTag.values()][0].to;
+  const questions: string[] = [];
+  const typos: string[] = [];
+  for (const e of byTag.values()) {
+    const tag = `@${e.tag}`;
+    if (e.ambiguous?.length) questions.push(`which of ${quoted(e.ambiguous)} does ${tag} mean?`);
+    else if (e.gone) questions.push(`${tag}'s note is gone: which note should it go to now?`);
+    else if (e.did_you_mean) typos.push(`${tag} looks like @${e.did_you_mean}: fix the note on the Kindle and the next sync files it.`);
+    else if (e.candidates?.length) questions.push(`does ${tag} mean your note ${quoted(e.candidates)}?`);
+    else questions.push(`which note should ${tag} go to?`);
+  }
+  const tags = [...byTag.keys()].map((t) => `@${t}`);
+  const ask = questions.length
+    ? ` Then ask, in one message: ${questions.join(" ")} When they name a note, call kindle_teach_tag with the tag and ` +
+      "that note: it moves what is waiting and files future ones there. In a scheduled or unattended run, put the " +
+      "question in your summary instead. Never call kindle_teach_tag without their answer."
+    : "";
+  return {
+    in: where,
+    tags,
+    ask_user: `Tell the user the sync couldn't place ${tags.join(", ")}, so ${tags.length > 1 ? "they're" : "it's"} in ${where}.${typos.length ? ` ${typos.join(" ")}` : ""}${ask}`,
+  };
+}
+
 export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions = {}): VaultStepResult {
   const result: VaultStepResult = {
     vault: cfg.obsidianVault ?? "",
@@ -182,11 +221,16 @@ export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions =
           if (!cfg.autoFile) continue;
           const f = fileCommand(ctx, store.getHighlight(h.id)!, c);
           if (f.outcome === "found") result.found_earlier++;
-          else if (f.outcome === "unrouted") result.unrouted.push({ tag: f.tag, arg: f.arg, reason: f.reason ?? "" });
+          else if (f.outcome === "unrouted") {
+            const { tag, arg, reason = "", to, suggestion, ambiguous, gone } = f;
+            result.unrouted.push({ tag, arg, reason, to, ...suggestion, ...(ambiguous ? { ambiguous } : {}), ...(gone ? { gone } : {}) });
+          }
           else filed.set(`${f.tag}\n${f.to}`, (filed.get(`${f.tag}\n${f.to}`) ?? 0) + 1);
         }
       }
       result.filed = [...filed].map(([k, count]) => ({ tag: k.split("\n")[0], to: k.split("\n")[1], count }));
+      const unknown = askAboutTags(result.unrouted.filter((u) => !commandSpec(u.tag)));
+      if (unknown) result.unknown_tags = unknown;
       // 3. Links in highlights exported before: only with the user's yes.
       const pref = linkExistingPreference(store, ctx.vault);
       if (pref === "always") {

@@ -2,10 +2,10 @@
 
 Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked. Sync engine
 (fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP server over
-stdio (15 tools, 2 prompts), shipped on npm, as a Claude Desktop extension (.mcpb), and as a plugin for Claude Code
+stdio (17 tools, 2 prompts), shipped on npm, as a Claude Desktop extension (.mcpb), and as a plugin for Claude Code
 and Cowork (the same .mcpb plus four skills). With a vault, each sync appends new highlights to book notes linked to
-the user's notes, files @todo/@quote/@project itself, and hands @post/@research to the agent, which saves them with
-`kindle_complete_command`. See README.md.
+the user's notes, files @todo/@quote/@project and any other tag named after a note itself, and hands @post/@research
+to the agent, which saves them with `kindle_complete_command`. See README.md.
 
 ## Setup
     npm install && npm test          # vitest; fixtures are scrubbed real page markup
@@ -32,7 +32,8 @@ the user's notes, files @todo/@quote/@project itself, and hands @post/@research 
   blocks), `filename()` (never change it: existing notes are found by it), find-by-frontmatter.
 - `src/vault/` — `write.ts` (every vault write: inside the vault, no symlinks, appends, compare-and-swap,
   neutralized model output), `index.ts` (per-vault cache of names, aliases and full text; budgeted reads),
-  `linkify.ts` (mention linking), `frontmatter.ts`, `file.ts` (filing and agent notes), `backfill.ts` (links in
+  `linkify.ts` (mention linking), `frontmatter.ts`, `file.ts` (filing, other tags, taught tags, agent notes, reading a
+  note), `backfill.ts` (links in
   blocks exported before, only on the user's yes), `run.ts` (the vault step: lease, no writes on a partial index).
 - `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Prompts in `src/prompts/*.md`.
   Claude Desktop ignores server instructions: what the model must know goes in tool descriptions and results.
@@ -58,6 +59,9 @@ the user's notes, files @todo/@quote/@project itself, and hands @post/@research 
 - When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, save a scrubbed fixture, fix selectors, add a test.
 - Keep the store and the MCP interface separate; the cron job and the server share one SQLite file (WAL).
 - The server never assumes a runner or a sink. Routing behaviour lives in `COMMANDS` and the prompt text.
+- A tag no command owns files only into a note named exactly like it, or the note the user chose for it with
+  `kindle_teach_tag`; anything else waits in Unrouted with a question. Never file on a guess, never create a note for
+  an unknown tag, and never teach a tag without the user's answer.
 - Vault writes go through `src/vault/write.ts`, under the vault lease. Append; never rewrite the user's text.
 - MCP tool calls must finish well under 60 s (Claude Desktop cancels them); long work takes a deadline.
 - stdio servers must not write to stdout except through the transport; log to stderr.
@@ -86,6 +90,13 @@ the user's notes, files @todo/@quote/@project itself, and hands @post/@research 
   bundle's defaults); `claude plugin validate` passes for `plugin/` and the marketplace; headless `/kindle:routine`
   and `/kindle:setup` through `build/plugin-dev` against the local stand-in (vault from `kindle_set_vault`, @post
   saved). Not yet checked: Cowork, the app's Customize > Plugins install, the Desktop Code tab running the bundle.
+- 1.3.0 (2026-10-01), against the local stand-in and temp vaults with placeholder notes: a tag named after a note filed
+  into it on sync; tags matching no note waited in Unrouted, and headless `/kindle:routine` through `build/plugin-dev`
+  put the one question (with the suggested note) in its summary without teaching anything; a second run answering
+  yes called `kindle_teach_tag`, which moved the waiting entry and removed its Unrouted line; the @research note
+  drew on the related note read in full with `kindle_read_note`; the bundle entry saved the extension's vault to
+  `config.json` once, left it alone on a later start with another vault, and reported the mismatch. Not yet checked
+  live: 1.3.0 in the Desktop Code tab, routines and Cowork.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.
