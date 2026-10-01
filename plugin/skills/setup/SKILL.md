@@ -17,7 +17,8 @@ step needs them, stop and wait.
    the vault's top folder. Call `kindle_set_vault` with it. If it says the folder isn't a vault,
    show them why and ask again. Without Obsidian, skip this: Claude puts results in the chat.
 4. **First sync.** Call `kindle_sync`; while the result says `partial`, call it again. Then do
-   what its `pending` instruction says, and ask its `link_existing` question if there is one.
+   what its `pending` instruction says, and ask its `link_existing` and `unknown_tags` questions
+   if there are any.
 5. **Scheduled sync.** Offer it. If they want it, give these steps for Claude Desktop:
    - Make a new, empty folder for the routine. Not the vault (Claude's own file tools would work
      in it directly) and not the data folder (it holds the Amazon session).
@@ -25,9 +26,10 @@ step needs them, stop and wait.
      permission mode on Manual, select the folder, leave Worktree off, pick a schedule.
    - Create, then Run now, and answer each permission prompt with Always allow for
      kindle_sync, kindle_get_pending_commands, kindle_get_command_context,
-     kindle_complete_command, kindle_search_vault and kindle_status, plus WebSearch and WebFetch
-     for @research. Never always-allow kindle_login (it opens a window) or
-     kindle_link_existing_highlights (it changes older notes).
+     kindle_complete_command, kindle_search_vault, kindle_read_note and kindle_status, plus
+     WebSearch and WebFetch for @research. Never always-allow kindle_login (it opens a window),
+     kindle_link_existing_highlights (it changes older notes), kindle_teach_tag or
+     kindle_set_vault (both are the user's call).
 6. If every Kindle tool shows up twice, the Claude Desktop extension is also on in this session.
    Suggest turning it off here (the + menu, Connectors): the plugin brings the same tools.
 7. Finish with what's set up, and what they can say next: "Sync my Kindle highlights",

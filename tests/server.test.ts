@@ -21,7 +21,7 @@ export const TOOLS = [
   "kindle_list_books", "kindle_get_highlights", "kindle_search_highlights", "kindle_get_new_since",
   "kindle_get_pending_commands", "kindle_get_command_context", "kindle_complete_command", "kindle_mark_command_done",
   "kindle_search_vault", "kindle_link_existing_highlights", "kindle_export_to_obsidian", "kindle_sync",
-  "kindle_status", "kindle_set_vault", "kindle_login",
+  "kindle_status", "kindle_set_vault", "kindle_login", "kindle_read_note", "kindle_teach_tag",
 ];
 
 let amazon: FakeAmazon;
@@ -308,12 +308,43 @@ describe("MCP server", () => {
     expect(res.obsidian_vault).toBe(join(home, "vault"));
     expect(res.note).toMatch(/this app's own vault setting .* still applies here/);
     expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).obsidian_vault).toBe(other);
+    // Chat and the plugin would now write to different vaults: status says so, with the fix.
+    expect((await call(client, "kindle_status")).data.vault_mismatch).toMatchObject({ this_app: join(home, "vault"), saved: other, fix: expect.stringMatching(/kindle_set_vault/) });
 
     // Inside a plugin the saved vault wins, so it applies at once.
     const plugin = await connected({ CLAUDE_PLUGIN_ROOT: "/plugins/kindle" }, true, home);
     expect((await call(plugin.client, "kindle_status")).data).toMatchObject({ obsidian_vault: other, running_in: "plugin" });
     const again = (await call(plugin.client, "kindle_set_vault", { path: other })).data;
     expect([again.obsidian_vault, again.note]).toEqual([other, undefined]);
+  });
+
+  it("asks about a tag it can't place, learns the answer, and reads whole notes", async () => {
+    const { client, home } = await connected();
+    writeFileSync(join(home, "vault", "Roadmap.md"), "# Roadmap\n\nThe whole plan, in detail.\n");
+    const store = new Store(join(home, "kindle.db"));
+    const book = store.listBooks(null, 10)[0];
+    store.upsertHighlight(book.book_id, makeHighlight({ bookId: book.book_id, text: "A line about plans.", note: "@road check this", locationStart: 4000, amazonId: "B0FAKE0004:600000:HIGHLIGHT:road" }));
+    store.close();
+
+    const first = (await call(client, "kindle_export_to_obsidian")).data.obsidian;
+    expect(first.unknown_tags.tags).toEqual(["@road"]);
+    expect(first.unknown_tags.ask_user).toContain('does @road mean your note "Roadmap"?');
+    expect(readFileSync(join(home, "vault", "Roadmap.md"), "utf8")).not.toContain("A line about plans."); // nothing on a guess
+    expect((await call(client, "kindle_status")).data.in_unrouted).toEqual({ "@road": 1 });
+
+    expect((await call(client, "kindle_teach_tag", { tag: "todo", note: "Roadmap" })).data.error).toMatch(/built-in command/);
+    const taught = (await call(client, "kindle_teach_tag", { tag: "@road", note: "Roadmap" })).data;
+    expect(taught).toMatchObject({ ok: true, tag: "road", note: "Roadmap.md", link: "[[Roadmap]]", moved: 1, left_in_unrouted: 0 });
+    const status = (await call(client, "kindle_status")).data;
+    expect(status.learned_tags).toEqual({ "@road": "Roadmap.md" });
+    expect(status.in_unrouted).toBeUndefined();
+
+    const read = (await call(client, "kindle_read_note", { note: "Roadmap" })).data;
+    expect(read).toMatchObject({ path: "Roadmap.md", truncated: false });
+    expect(read.text).toContain("The whole plan, in detail.");
+    expect(read.text).toContain("> A line about plans.");
+    expect((await call(client, "kindle_read_note", { note: "Nope" })).data.error).toMatch(/No note named/);
+    expect((await call(client, "kindle_teach_tag", { tag: "road" })).data).toMatchObject({ ok: true, forgotten: true });
   });
 
   it("parses since spans and dates", () => {

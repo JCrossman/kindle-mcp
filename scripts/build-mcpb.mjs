@@ -85,10 +85,11 @@ const manifest = {
       type: "directory",
       title: "Obsidian vault (optional)",
       description:
-        "If set, each sync adds new highlights to one note per book (linked to your notes), files @todo, @quote and " +
-        "@project, and Claude saves @post and @research as notes. Outside the Kindle folder, only notes you name with " +
-        "@project (and book notes you moved there) are written to. Empty: the vault saved with kindle_set_vault or " +
-        "`kindle-mcp config set vault`, if any.",
+        "Your vault's top folder, shared with the plugin, routines and the command line on this computer. Leave it " +
+        "empty if you've told Claude where your vault is. Each sync adds new highlights to one note per book (linked " +
+        "to your notes) and files @todo, @quote, @project and tags named after your notes; Claude saves @post and " +
+        "@research as notes. Outside the Kindle folder, only notes you name with a tag (and book notes you moved " +
+        "there) are written to.",
       // Every option has a default: Cowork loads a plugin's bundle only then (it never asks for values).
       default: "",
       required: false,

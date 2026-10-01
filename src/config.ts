@@ -1,5 +1,5 @@
 /** Paths and settings. Everything is overridable by environment variable. */
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -167,28 +167,89 @@ function withSettingsLock<T>(path: string, waitMs: number, fn: () => T): T {
 /**
  * Sets (or, with null, removes) keys in the settings file. Everything else in it stays as written,
  * including keys this version doesn't know (a newer one may have saved them). A file that isn't a
- * JSON object is left alone: the error says so.
+ * JSON object is left alone: the error says so. With `onlyMissing`, keys that already hold a value
+ * are kept, decided under the same lock. True when the file was written.
  */
 export function writeSettingsFile(
   path: string,
   patch: Partial<Record<SettingKey, string | boolean | string[] | null>>,
   waitMs = 2000,
-): void {
-  withSettingsLock(path, waitMs, () => {
+  onlyMissing = false,
+): boolean {
+  return withSettingsLock(path, waitMs, () => {
     let next: Record<string, unknown>;
     try {
       next = { ...readSettingsObject(path) };
     } catch (e) {
       throw new Error(`Left ${path} unchanged: it can't be read (${(e as Error).message}). Fix or delete it, then try again.`);
     }
+    let changed = false;
     for (const [k, v] of Object.entries(patch)) {
+      if (onlyMissing && next[k] !== undefined && next[k] !== "") continue;
       if (v === null) delete next[k];
       else next[k] = v;
+      changed = true;
     }
+    if (!changed) return false;
     const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
     renameSync(tmp, path);
+    return true;
   });
+}
+
+/** The vault saved in the settings file, as a full path; null when none is. */
+export function savedVault(cfg: Config): string | null {
+  const v = readSettingsFile(cfg.settingsPath).obsidian_vault;
+  return typeof v === "string" && v.trim() ? expand(v.trim()) : null;
+}
+
+function samePath(a: string, b: string): boolean {
+  const canonical = (p: string): string => {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  };
+  return canonical(a) === canonical(b);
+}
+
+/** True when this app passes a vault of its own: an extension's setting or an environment variable, outside a plugin. */
+const appSetsVault = (cfg: Config): boolean => !cfg.inPlugin && cfg.sources.obsidian_vault === "environment" && Boolean(cfg.obsidianVault);
+
+/**
+ * Copies this app's own vault (and folder) into the settings file when nobody saved one, so the
+ * plugin and the command line follow the extension's choice with no step. Never replaces a saved
+ * vault, and skips a folder that isn't a vault. True when something was saved.
+ */
+export function seedSharedVault(cfg: Config): boolean {
+  if (!appSetsVault(cfg) || vaultProblem(cfg.obsidianVault!)) return false;
+  const patch: Partial<Record<SettingKey, string>> = { obsidian_vault: cfg.obsidianVault! };
+  if (cfg.sources.obsidian_folder === "environment") patch.obsidian_folder = cfg.obsidianFolder;
+  try {
+    return writeSettingsFile(cfg.settingsPath, patch, 2000, true);
+  } catch {
+    return false; // a busy or unreadable settings file: try again next start
+  }
+}
+
+/**
+ * When this app passes its own vault and the settings file names another, chat and the plugin
+ * write to different vaults. Null when they agree, or when this app has no vault of its own.
+ */
+export function vaultMismatch(cfg: Config): { this_app: string; saved: string; fix: string } | null {
+  if (!appSetsVault(cfg)) return null;
+  const saved = savedVault(cfg);
+  if (!saved || samePath(saved, cfg.obsidianVault!)) return null;
+  return {
+    this_app: cfg.obsidianVault!,
+    saved,
+    fix:
+      "This app writes to its own vault setting, while the plugin, routines and the command line use the saved one. " +
+      "Ask the user which vault is right. To use this app's everywhere, call kindle_set_vault with it. To use the " +
+      "saved one, the user clears the vault field in this app's extension settings.",
+  };
 }
 
 /** true/false/1/0/yes/no/on/off; null for anything else. */

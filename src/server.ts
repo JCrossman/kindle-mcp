@@ -22,7 +22,7 @@ import {
 import { z } from "zod";
 
 import { actionsTable, COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, type CommandWithAction } from "./commands.js";
-import { ensureDirs, expand, vaultProblem, writeSettingsFile, type Config } from "./config.js";
+import { ensureDirs, expand, seedSharedVault, vaultMismatch, vaultProblem, writeSettingsFile, type Config } from "./config.js";
 import { loadSession } from "./notebook/session.js";
 import { Store, type HighlightRow } from "./store.js";
 import { normalizeFolder } from "./vault/write.js";
@@ -236,7 +236,12 @@ function registerPrompts(server: McpServer): void {
 
 let loginInProgress = false;
 
-const NO_VAULT = "No Obsidian vault is set. Set it in the extension's settings (or OBSIDIAN_VAULT) to save notes there.";
+const NO_VAULT =
+  "No Obsidian vault is set. Ask the user for their vault's folder and save it with kindle_set_vault (every Claude " +
+  "app on this computer then uses it), or set it in the extension's settings.";
+
+/** Related notes come as short excerpts; the agent reads the ones that matter in full. */
+const READ_HINT = "These are short excerpts. Read the two or three most relevant notes in full with kindle_read_note before writing.";
 
 /** What to do when Amazon needs the user, in a conversation or in a run nobody is watching. */
 const SIGN_IN_NEXT =
@@ -378,7 +383,8 @@ export function createServer(cfg: Config): McpServer {
         "Everything needed to act on one highlight: the highlight and its note (as typed), the commands still to do " +
         "with their actions, the neighbouring highlights in the same book, other highlights in the book with the " +
         "same tag, related highlights from other books, and (with a vault) related notes from the user's vault with " +
-        "paste-ready [[links]] and the link to the highlight itself.",
+        "paste-ready [[links]] and the link to the highlight itself. Related notes are short excerpts: read the ones " +
+        "that matter in full with kindle_read_note.",
       inputSchema: { highlight_id: z.string().min(1).describe("The 'id' field of a highlight") },
       annotations: READ,
     },
@@ -420,7 +426,8 @@ export function createServer(cfg: Config): McpServer {
               if (path) payload.source_link = sourceLink(open.ctx, h, path);
               payload.related_notes = open.index
                 .related(`${h.text} ${h.note}`, 5)
-                .map((n) => ({ title: n.title, link: `[[${open.ctx.linker.linkText(n.path)}]]`, snippet: n.snippet }));
+                .map((n) => ({ title: n.title, path: n.path, link: `[[${open.ctx.linker.linkText(n.path)}]]`, snippet: n.snippet }));
+              if ((payload.related_notes as unknown[]).length) payload.related_notes_hint = READ_HINT;
             } finally {
               open.close();
             }
@@ -528,8 +535,9 @@ export function createServer(cfg: Config): McpServer {
       title: "Search the Obsidian vault",
       description:
         "Full-text search over the user's Obsidian vault notes (titles, aliases and text), best first, each with a " +
-        "paste-ready [[link]]. Use it to find related notes to link from a draft or research note. The Kindle folder " +
-        "is left out unless include_kindle is true; excluded folders and notes marked `kindle-link: false` never appear.",
+        "paste-ready [[link]] and a short excerpt. Use it to find related notes to link from a draft or research note, " +
+        "and kindle_read_note to read one in full. The Kindle folder is left out unless include_kindle is true; " +
+        "excluded folders and notes marked `kindle-link: false` never appear.",
       inputSchema: {
         query: z.string().min(2).describe("Words to find, e.g. 'loss aversion pricing'"),
         limit: z.number().int().min(1).max(20).default(8),
@@ -555,7 +563,95 @@ export function createServer(cfg: Config): McpServer {
             count: hits.length,
             ...(open.complete ? {} : { index_complete: false }),
             notes: hits.map((n) => ({ title: n.title, path: n.path, link: `[[${linker.linkText(n.path)}]]`, snippet: n.snippet })),
+            ...(hits.length ? { hint: READ_HINT } : {}),
           });
+        } finally {
+          open.close();
+        }
+      }),
+  );
+
+  server.registerTool(
+    "kindle_read_note",
+    {
+      title: "Read a vault note",
+      description:
+        "Read one of the user's Obsidian notes in full (up to max_chars), by its name, an alias or its path in the " +
+        "vault. Read-only. Search results and related notes are short excerpts: before writing @post or @research, " +
+        "read the two or three most relevant notes with this. Notes in excluded folders and notes marked " +
+        "`kindle-link: false` can't be read.",
+      inputSchema: {
+        note: z.string().min(1).max(300).describe("The note's name, alias or vault path, e.g. 'Roadmap' or 'Work/Roadmap.md'"),
+        max_chars: z.number().int().min(500).max(20_000).default(20_000).describe("Cut the text at this many characters"),
+      },
+      annotations: READ,
+    },
+    async ({ note, max_chars }) =>
+      withStoreAsync(async (store) => {
+        if (!cfg.obsidianVault) return fail(NO_VAULT);
+        const { openVault, vaultErrorMessage } = await import("./vault/run.js");
+        const { readNote } = await import("./vault/file.js");
+        let open;
+        try {
+          open = openVault(cfg, store, Date.now() + 10_000, false);
+        } catch (e) {
+          return fail(vaultErrorMessage(e));
+        }
+        try {
+          return reply({ ...readNote(open.ctx, note, max_chars) });
+        } catch (e) {
+          const indexing = open.complete ? "" : " The vault is still being indexed; try again in a moment.";
+          return fail(`${vaultErrorMessage(e)}${indexing}`);
+        } finally {
+          open.close();
+        }
+      }),
+  );
+
+  server.registerTool(
+    "kindle_teach_tag",
+    {
+      title: "Point a tag at a note",
+      description:
+        "Only on the user's word: remember that a tag no command owns (like @roadmap) belongs in one of their notes. " +
+        "What is waiting in Unrouted for that tag moves into the note now, and every later sync files the tag there. " +
+        "`note` is a note's name or its path in the vault; if no note has that name, one is made in the Kindle " +
+        "folder's Topics. Leave `note` out to forget the tag. Use it when the user answers the question in a sync " +
+        "result's `unknown_tags`. Never on a guess, and never in a scheduled or unattended run.",
+      inputSchema: {
+        tag: z.string().min(1).max(60).describe("The tag as typed on the Kindle, e.g. 'roadmap' or '@roadmap'"),
+        note: z.string().max(300).optional().describe("The note's name or vault path, e.g. 'Roadmap' or 'Work/Roadmap.md'; leave out to forget the tag"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ tag, note }) =>
+      withStoreAsync(async (store) => {
+        if (!cfg.obsidianVault) return fail(NO_VAULT);
+        const { openVault, vaultErrorMessage, withVaultLease } = await import("./vault/run.js");
+        const { teachTag } = await import("./vault/file.js");
+        let open;
+        try {
+          open = openVault(cfg, store, Date.now() + 30_000);
+        } catch (e) {
+          return fail(vaultErrorMessage(e));
+        }
+        try {
+          if (!open.complete) return fail("The vault is still being indexed. Try again in a moment.");
+          const ctx = open.ctx;
+          const out = withVaultLease(store, () => teachTag(ctx, tag, note ?? null));
+          if (out === "busy") return fail("Another kindle-mcp process is writing to the vault. Try again in a minute.");
+          if (out.note === null) {
+            return reply({ ok: true, tag: out.tag, forgotten: true, message: `@${out.tag} goes to Unrouted again, unless a note is named like it.` });
+          }
+          return reply({
+            ok: true,
+            ...out,
+            ...(out.left_in_unrouted
+              ? { tell_user: `${out.left_in_unrouted} entr${out.left_in_unrouted === 1 ? "y was" : "ies were"} also filed, but stayed in Unrouted because they were edited there; delete them there if you like.` }
+              : {}),
+          });
+        } catch (e) {
+          return fail(vaultErrorMessage(e));
         } finally {
           open.close();
         }
@@ -640,8 +736,9 @@ export function createServer(cfg: Config): McpServer {
         "Obsidian vault set, it then appends new highlights to their book notes with links to the user's notes and " +
         "files @todo, @quote and @project. The result's `pending` lists the @commands left for you with an " +
         "`instruction`: follow it (it says whether to do them now or offer). `partial: true` means call kindle_sync " +
-        "again for the rest. If `link_existing` is present, ask the user its question. If Amazon needs the user to " +
-        "sign in, the result says so (`needs_human`) and still carries `pending`: follow its `next`.",
+        "again for the rest. If `link_existing` is present, ask the user its question. If `unknown_tags` is present, " +
+        "pass its `ask_user` on (tags the sync couldn't place wait in Unrouted until the user names a note). If Amazon " +
+        "needs the user to sign in, the result says so (`needs_human`) and still carries `pending`: follow its `next`.",
       inputSchema: {
         full: z.boolean().default(false).describe("Re-read every book instead of only books annotated since last sync"),
         book: z.string().optional().describe("Limit the sync to one title fragment or ASIN"),
@@ -670,10 +767,13 @@ export function createServer(cfg: Config): McpServer {
         let vaultReady = false;
         if (cfg.obsidianVault) {
           const { runVaultStep } = await import("./vault/run.js");
-          const { link_existing, ...obsidian } = runVaultStep(cfg, store, { deadline: deadline + VAULT_GRACE_MS, offerLinkExisting: true });
+          const { link_existing, unknown_tags, ...obsidian } = runVaultStep(cfg, store, { deadline: deadline + VAULT_GRACE_MS, offerLinkExisting: true });
           payload.obsidian = obsidian;
           vaultReady = !obsidian.error;
           if (link_existing) payload.link_existing = link_existing;
+          if (unknown_tags) payload.unknown_tags = unknown_tags;
+          const mismatch = vaultMismatch(cfg);
+          if (mismatch) payload.vault_mismatch = mismatch;
         }
         payload.pending = pendingSummary(cfg, store, vaultReady);
         if (signIn) return fail(signIn, { needs_human: true, next: SIGN_IN_NEXT, ...payload });
@@ -687,8 +787,9 @@ export function createServer(cfg: Config): McpServer {
       title: "Store status",
       description:
         "Store counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon " +
-        "session is saved and when, the data folder and version, the Obsidian vault and settings in effect, and a " +
-        "`next_step` suggestion.",
+        "session is saved and when, the data folder and version, the Obsidian vault and settings in effect, tags the " +
+        "user pointed at notes and tags waiting in Unrouted, and a `next_step` suggestion. `vault_mismatch` means " +
+        "this app and the other Claude apps write to different vaults: ask the user which one is right.",
       annotations: READ,
     },
     async () =>
@@ -697,15 +798,25 @@ export function createServer(cfg: Config): McpServer {
         const saved = loadSession(cfg.sessionPath);
         const session = saved !== null;
         let linkExisting: string | undefined;
+        let tags: Json = {};
         if (cfg.obsidianVault) {
           try {
             const { Vault } = await import("./vault/write.js");
             const { linkExistingPreference } = await import("./vault/run.js");
-            linkExisting = linkExistingPreference(store, Vault.open(cfg.obsidianVault, cfg.obsidianFolder)) ?? "not answered yet";
+            const { learnedTags } = await import("./vault/file.js");
+            const vault = Vault.open(cfg.obsidianVault, cfg.obsidianFolder);
+            linkExisting = linkExistingPreference(store, vault) ?? "not answered yet";
+            const learned = learnedTags(store, vault);
+            const waiting = store.outputCountsAt(vault.k("Inbox/Unrouted.md"));
+            tags = {
+              ...(learned.length ? { learned_tags: Object.fromEntries(learned.map((t) => [`@${t.tag}`, t.path])) } : {}),
+              ...(Object.keys(waiting).length ? { in_unrouted: Object.fromEntries(Object.entries(waiting).map(([t, n]) => [`@${t}`, n])) } : {}),
+            };
           } catch {
             linkExisting = "vault folder not found";
           }
         }
+        const mismatch = vaultMismatch(cfg);
         const next = !session
           ? "The user isn't signed in to Amazon yet: offer kindle_login (it opens a sign-in window; not in a scheduled run), then kindle_sync."
           : !s.highlights
@@ -726,7 +837,9 @@ export function createServer(cfg: Config): McpServer {
           ...(cfg.inPlugin ? { running_in: "plugin" } : {}),
           obsidian_vault: cfg.obsidianVault,
           obsidian_folder: cfg.obsidianFolder,
+          ...(mismatch ? { vault_mismatch: mismatch } : {}),
           ...(linkExisting ? { link_existing: linkExisting } : {}),
+          ...tags,
           settings: {
             act_on_commands: cfg.actOnCommands,
             auto_file: cfg.autoFile,
@@ -829,6 +942,8 @@ export function createServer(cfg: Config): McpServer {
 }
 
 export async function serveStdio(cfg: Config): Promise<void> {
+  // An app's own vault setting becomes everyone's when nobody saved one: the plugin then follows it.
+  if (seedSharedVault(cfg)) console.error(`kindle-mcp: saved this app's vault in ${cfg.settingsPath} for the other Claude apps`);
   const server = createServer(cfg);
   await server.connect(new StdioServerTransport());
   await new Promise<void>((resolve) => {

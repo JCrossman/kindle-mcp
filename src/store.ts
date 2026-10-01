@@ -564,6 +564,35 @@ export class Store {
     this.db.prepare("DELETE FROM app_state WHERE key=?").run(key);
   }
 
+  /** Every shared-state entry whose key starts with `prefix`, in key order. */
+  statesWithPrefix(prefix: string): Array<{ key: string; value: string }> {
+    return this.db
+      .prepare("SELECT key, value FROM app_state WHERE substr(key, 1, ?) = ? ORDER BY key")
+      .all(prefix.length, prefix) as Array<{ key: string; value: string }>;
+  }
+
+  /** Recorded outputs of one tag that went to one file (e.g. the Unrouted list), oldest first. */
+  outputsAt(tag: string, path: string): Array<{ highlight_id: string; command_key: string; block_id: string | null }> {
+    return this.db
+      .prepare("SELECT highlight_id, command_key, block_id FROM command_outputs WHERE tag=? AND path=? ORDER BY at, highlight_id")
+      .all(tag, path) as Array<{ highlight_id: string; command_key: string; block_id: string | null }>;
+  }
+
+  /** Points a recorded output at the file it moved to. */
+  moveOutput(highlightId: string, commandKey: string, path: string, blockId: string | null): void {
+    this.db
+      .prepare("UPDATE command_outputs SET path=?, block_id=? WHERE highlight_id=? AND command_key=?")
+      .run(path, blockId, highlightId, commandKey);
+  }
+
+  /** How many recorded outputs of each tag sit in one file. */
+  outputCountsAt(path: string): Record<string, number> {
+    const rows = this.db
+      .prepare("SELECT tag, COUNT(*) AS n FROM command_outputs WHERE path=? GROUP BY tag ORDER BY tag")
+      .all(path) as Array<{ tag: string; n: number }>;
+    return Object.fromEntries(rows.map((r) => [r.tag, Number(r.n)]));
+  }
+
   /** Takes the named lease if it is free, expired, or already ours. Returns whether we hold it. */
   acquireLease(name: string, holder: string, ttlMs: number): boolean {
     const now = Date.now();
