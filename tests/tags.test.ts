@@ -73,7 +73,7 @@ describe("tags no command owns", () => {
 
   it("never guess: two matches, no match or an opted-out note go to Unrouted, and no note is created", () => {
     const w = world({
-      "A/Plan.md": "one",
+      "People, Work/Plan.md": "one",
       "B/Plan.md": "two",
       "Private/Secret.md": "---\nkindle-link: false\n---\nkeep out",
     });
@@ -83,14 +83,16 @@ describe("tags no command owns", () => {
     const before = w.files();
     const r = runVaultStep(w.cfg, w.store);
     expect(r.unrouted.map((u) => u.tag).sort()).toEqual(["nothingnamedthis", "plan", "secret"]);
-    expect(r.unrouted.find((u) => u.tag === "plan")!.reason).toBe("matches 2 notes (A/Plan.md, B/Plan.md); tell Claude which one @plan means");
+    const plan = r.unrouted.find((u) => u.tag === "plan")!;
+    expect(plan.reason).toBe("matches 2 notes (B/Plan.md, People, Work/Plan.md); tell Claude which one @plan means");
+    expect(plan.ambiguous).toEqual(["B/Plan.md", "People, Work/Plan.md"]);
     expect(r.unrouted.every((u) => u.to === UNROUTED)).toBe(true);
-    expect(w.read("A/Plan.md")).toBe("one");
+    expect(w.read("People, Work/Plan.md")).toBe("one");
     expect(w.read("B/Plan.md")).toBe("two");
     expect(w.read("Private/Secret.md")).not.toContain("From Kindle");
     const added = w.files().filter((f) => !before.includes(f));
     expect(added.sort()).toEqual(["Kindle/Inbox/Unrouted.md", "Kindle/Placeholder Book.md"]);
-    expect(r.unknown_tags!.ask_user).toContain('which of "A/Plan.md" or "B/Plan.md" does @plan mean?');
+    expect(r.unknown_tags!.ask_user).toContain('which of "B/Plan.md" or "People, Work/Plan.md" does @plan mean?');
   });
 
   it("suggest what a tag may have meant, and ask once without acting", () => {
@@ -159,6 +161,23 @@ describe("tags no command owns", () => {
     expect(runVaultStep(w.cfg, w.store).unrouted.map((u) => u.tag)).toEqual(["web3"]);
   });
 
+  it("keep an Unrouted line edited anywhere, even inside the notes its reason lists", () => {
+    const w = world({ "A/Plan.md": "one", "B/Plan.md": "two" });
+    const x = w.add(100, "@plan first");
+    const y = w.add(200, "@plan second");
+    runVaultStep(w.cfg, w.store);
+    const listed = w.read(UNROUTED);
+    expect(listed).toContain("matches 2 notes (A/Plan.md, B/Plan.md)");
+    const edited = listed.split("\n").map((l) => (l.endsWith(`^kh-${y}-plan`) ? l.replace("B/Plan.md)", "B/Plan.md, the old one)") : l)).join("\n");
+    writeFileSync(join(w.vault, UNROUTED), edited);
+    const open = openVault(w.cfg, w.store);
+    expect(teachTag(open.ctx, "plan", "A/Plan.md")).toMatchObject({ moved: 2, left_in_unrouted: 1 });
+    open.close();
+    const after = w.read(UNROUTED);
+    expect(after).not.toContain(`^kh-${x}-plan`);
+    expect(after).toContain("B/Plan.md, the old one)");
+  });
+
   it("refuse what can't be learned, create a topic note when none exists, and notice a note that's gone", () => {
     const w = world({ "A/Plan.md": "one", "B/Plan.md": "two", "Tech/Web 3.0.md": "x" });
     const open = openVault(w.cfg, w.store);
@@ -199,21 +218,27 @@ describe("reading a note", () => {
       {
         "Work/Roadmap.md": "---\naliases: [Plans]\n---\n# Roadmap\n\nEverything about the plan.\n",
         "Private/Diary.md": "secret",
+        "Private/Roadmap.md": "the excluded one",
         "Work/Hidden.md": "---\nkindle-link: false\n---\nhidden",
       },
       { KINDLE_LINK_EXCLUDE: "Private" },
     );
     const open = openVault(w.cfg, w.store);
     const byName = readNote(open.ctx, "Roadmap", 20_000);
-    expect(byName).toMatchObject({ path: "Work/Roadmap.md", title: "Roadmap", link: "[[Roadmap]]", truncated: false });
+    // Obsidian sees both notes named Roadmap, so the link names the folder.
+    expect(byName).toMatchObject({ path: "Work/Roadmap.md", title: "Roadmap", link: "[[Work/Roadmap]]", truncated: false });
     expect(byName.text).toContain("Everything about the plan.");
     expect(readNote(open.ctx, "plans", 20_000).path).toBe("Work/Roadmap.md");
     expect(readNote(open.ctx, "Work/Roadmap", 20_000).path).toBe("Work/Roadmap.md");
     const cut = readNote(open.ctx, "Work/Roadmap.md", 10);
     expect(cut).toMatchObject({ truncated: true, text: "---\naliase" });
     expect(cut.chars).toBeGreaterThan(10);
-    expect(() => readNote(open.ctx, "Diary", 20_000)).toThrow(/leave alone/);
-    expect(() => readNote(open.ctx, "Hidden", 20_000)).toThrow(/kindle-link: false/);
+    // A name never reaches a note kindle-mcp leaves alone, so the excluded "Roadmap" neither blocks nor leaks.
+    expect(() => readNote(open.ctx, "Diary", 20_000)).toThrow(/No note named/);
+    expect(() => readNote(open.ctx, "Hidden", 20_000)).toThrow(/No note named/);
+    expect(() => readNote(open.ctx, "Private/Diary.md", 20_000)).toThrow(/leave alone/);
+    expect(() => readNote(open.ctx, "Work/Hidden.md", 20_000)).toThrow(/kindle-link: false/);
+    expect(() => readNote(open.ctx, "Private/Roadmap.md", 20_000)).toThrow(/leave alone/);
     expect(() => readNote(open.ctx, "../outside.md", 20_000)).toThrow(/No note/);
     expect(() => readNote(open.ctx, "No Such Note", 20_000)).toThrow(/No note/);
     open.close();

@@ -164,17 +164,18 @@ function withSettingsLock<T>(path: string, waitMs: number, fn: () => T): T {
   }
 }
 
+type SettingsPatch = Partial<Record<SettingKey, string | boolean | string[] | null>>;
+
 /**
  * Sets (or, with null, removes) keys in the settings file. Everything else in it stays as written,
  * including keys this version doesn't know (a newer one may have saved them). A file that isn't a
- * JSON object is left alone: the error says so. With `onlyMissing`, keys that already hold a value
- * are kept, decided under the same lock. True when the file was written.
+ * JSON object is left alone: the error says so. `patch` may be a function of the file's current
+ * contents, decided under the same lock (null: write nothing). True when the file was written.
  */
 export function writeSettingsFile(
   path: string,
-  patch: Partial<Record<SettingKey, string | boolean | string[] | null>>,
+  patch: SettingsPatch | ((current: Record<string, unknown>) => SettingsPatch | null),
   waitMs = 2000,
-  onlyMissing = false,
 ): boolean {
   return withSettingsLock(path, waitMs, () => {
     let next: Record<string, unknown>;
@@ -183,14 +184,12 @@ export function writeSettingsFile(
     } catch (e) {
       throw new Error(`Left ${path} unchanged: it can't be read (${(e as Error).message}). Fix or delete it, then try again.`);
     }
-    let changed = false;
-    for (const [k, v] of Object.entries(patch)) {
-      if (onlyMissing && next[k] !== undefined && next[k] !== "") continue;
+    const changes = typeof patch === "function" ? patch({ ...next }) : patch;
+    if (!changes || !Object.keys(changes).length) return false;
+    for (const [k, v] of Object.entries(changes)) {
       if (v === null) delete next[k];
       else next[k] = v;
-      changed = true;
     }
-    if (!changed) return false;
     const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
     renameSync(tmp, path);
@@ -225,10 +224,14 @@ const appSetsVault = (cfg: Config): boolean => !cfg.inPlugin && cfg.sources.obsi
  */
 export function seedSharedVault(cfg: Config): boolean {
   if (!appSetsVault(cfg) || vaultProblem(cfg.obsidianVault!)) return false;
-  const patch: Partial<Record<SettingKey, string>> = { obsidian_vault: cfg.obsidianVault! };
-  if (cfg.sources.obsidian_folder === "environment") patch.obsidian_folder = cfg.obsidianFolder;
+  const saved = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
   try {
-    return writeSettingsFile(cfg.settingsPath, patch, 2000, true);
+    // One decision under the lock: with a vault already saved, neither the vault nor this app's folder is written.
+    return writeSettingsFile(cfg.settingsPath, (current) => {
+      if (saved(current.obsidian_vault)) return null;
+      const folder = cfg.sources.obsidian_folder === "environment" && !saved(current.obsidian_folder);
+      return { obsidian_vault: cfg.obsidianVault!, ...(folder ? { obsidian_folder: cfg.obsidianFolder } : {}) };
+    });
   } catch {
     return false; // a busy or unreadable settings file: try again next start
   }

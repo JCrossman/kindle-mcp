@@ -43,6 +43,10 @@ export interface Filed {
   to: string;
   reason?: string;
   suggestion?: Suggestion;
+  /** The notes a name matched when it matched more than one. */
+  ambiguous?: string[];
+  /** The note a taught tag pointed at, when it is gone. */
+  gone?: string;
 }
 
 const LQ = String.fromCharCode(0x201c);
@@ -308,17 +312,8 @@ const ambiguousReason = (tag: string, paths: string[]): string =>
   `matches ${paths.length} notes (${paths.join(", ")}); tell Claude which one @${tag} means`;
 const goneReason = (tag: string, title: string): string => `was going to ${title}, which is gone; tell Claude where @${tag} goes now`;
 
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const MARK = "\u0000";
-/** Any reason above for one tag, as a pattern (the variable parts match any text on the line). */
-function reasonPattern(tag: string): string {
-  const any = "[^\\n]*";
-  return [
-    escapeRe(UNKNOWN_REASON),
-    escapeRe(ambiguousReason(tag, [MARK])).replace(escapeRe(`1 notes (${MARK})`), `\\d+ notes \\(${any}\\)`),
-    escapeRe(goneReason(tag, MARK)).replace(MARK, any),
-  ].join("|");
-}
+/** The exact Unrouted line written for one entry, kept so it is removed later only if still untouched. */
+const lineKey = (vault: Vault, id: string): string => `unrouted:${vault.root}:${id}`;
 
 /**
  * Files one sync-type command (or an unknown / incomplete one to Unrouted). Callers hold the
@@ -337,20 +332,27 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
   const id = blockIdFor(h.id, c);
   const quote = excerpt(h);
 
-  const unrouted = (reason: string, suggestion?: Suggestion): Filed => {
+  const unrouted = (reason: string, extra: Partial<Filed> = {}): Filed => {
     const path = ctx.vault.k("Inbox/Unrouted.md");
     const text = ctx.vault.read(path);
-    if (!text || !hasBlockId(text, id)) appendList(ctx, path, "Kindle: unrouted", unroutedLine(h, c, reason, quote, link, id));
+    if (!text || !hasBlockId(text, id)) {
+      const line = unroutedLine(h, c, reason, quote, link, id);
+      appendList(ctx, path, "Kindle: unrouted", line);
+      ctx.store.setState(lineKey(ctx.vault, id), line);
+    }
     ctx.store.recordOutput(h, c, { via: "sync", path, blockId: id });
-    return { ...base, outcome: "unrouted", to: path, reason, ...(suggestion && Object.keys(suggestion).length ? { suggestion } : {}) };
+    return { ...base, outcome: "unrouted", to: path, reason, ...extra };
   };
 
   if (!spec) {
     // A tag no command owns: the note the user chose for it, else the one note named like it. Never a guess.
     const target = tagTarget(ctx, c.tag);
-    if (!target) return unrouted(UNKNOWN_REASON, suggestFor(ctx, c.tag));
-    if ("ambiguous" in target) return unrouted(ambiguousReason(c.tag, target.ambiguous));
-    if ("gone" in target) return unrouted(goneReason(c.tag, target.gone));
+    if (!target) {
+      const suggestion = suggestFor(ctx, c.tag);
+      return unrouted(UNKNOWN_REASON, Object.keys(suggestion).length ? { suggestion } : {});
+    }
+    if ("ambiguous" in target) return unrouted(ambiguousReason(c.tag, target.ambiguous), { ambiguous: target.ambiguous });
+    if ("gone" in target) return unrouted(goneReason(c.tag, target.gone), { gone: target.gone });
     addUnderFromKindle(ctx, target.path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, null);
     ctx.store.recordOutput(h, c, { via: "sync", path: target.path, blockId: id });
     return { ...base, outcome: "filed", to: target.path };
@@ -372,7 +374,8 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
   } else {
     const target = resolveProject(ctx, c.arg);
     if (target.ambiguous) {
-      return unrouted(`matches ${target.ambiguous.length} notes (${target.ambiguous.join(", ")}); rename one or add the name as an alias to the one you mean`);
+      const reason = `matches ${target.ambiguous.length} notes (${target.ambiguous.join(", ")}); rename one or add the name as an alias to the one you mean`;
+      return unrouted(reason, { ambiguous: target.ambiguous });
     }
     path = target.path!;
     addUnderFromKindle(ctx, path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, target.create ? "kindle/project" : null);
@@ -381,10 +384,13 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
   return { ...base, outcome: "filed", to: path };
 }
 
+/** A path in the vault (has a folder or ends in .md), rather than a note's name. */
+const isPathLike = (query: string): boolean => /[/\\]/.test(query.trim()) || /\.md$/i.test(query.trim());
+
 /** A note by vault-relative path, or by exact name or alias, in `pool`. */
 function findIn(ctx: FileContext, pool: IndexedNote[], query: string): { path: string } | { ambiguous: string[] } | null {
   const q = query.trim().replace(/\\/g, "/").replace(/^\/+/, "");
-  if (q.includes("/") || /\.md$/i.test(q)) {
+  if (isPathLike(q)) {
     const rel = /\.md$/i.test(q) ? q : `${q}.md`;
     const hit = pool.find((n) => n.path === rel) ?? pool.find((n) => n.path.toLowerCase() === rel.toLowerCase());
     return hit ? { path: hit.path } : null;
@@ -426,7 +432,7 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
   }
   if (found) path = found.path;
   else {
-    if (/[/\\]|\.md$/i.test(rawNote.trim())) {
+    if (isPathLike(rawNote)) {
       throw new VaultError(`There is no note kindle-mcp may file into at ${rawNote.trim()}. Pass a note's name or its path in the vault.`);
     }
     const name = sanitizeName(rawNote.trim());
@@ -441,7 +447,7 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
 
   // Move what is waiting in Unrouted.
   const inbox = ctx.vault.k("Inbox/Unrouted.md");
-  const removals: Array<{ id: string; line: RegExp }> = [];
+  const removals: Array<{ id: string; line: string }> = [];
   let moved = 0;
   for (const out of ctx.store.outputsAt(tag, inbox)) {
     const h = ctx.store.getHighlight(out.highlight_id);
@@ -452,23 +458,21 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
     addUnderFromKindle(ctx, path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, null);
     ctx.store.moveOutput(h.id, out.command_key, path, id);
     moved++;
-    // The line as the sync wrote it, with any reason it gives for this tag.
-    const [head, tail] = unroutedLine(h, c, MARK, excerpt(h), link, id).split(MARK).map(escapeRe);
-    removals.push({ id, line: new RegExp(`^${head}(?:${reasonPattern(tag)})${tail}$`) });
+    // The exact line the sync wrote. Entries from before 1.3.0 kept no copy; their only reason was the unknown one.
+    const written = ctx.store.getState(lineKey(ctx.vault, id)) ?? unroutedLine(h, c, UNKNOWN_REASON, excerpt(h), link, id);
+    removals.push({ id, line: written });
   }
 
   let left = 0;
   if (removals.length) {
     const text = ctx.vault.read(inbox);
-    if (text === null) left = 0;
-    else {
+    if (text !== null) {
       const eol = eolOf(text);
       const lines = text.split(/\r?\n/);
       const keep: string[] = [];
       let removed = 0;
       for (let i = 0; i < lines.length; i++) {
-        const r = removals.find((x) => x.line.test(lines[i]));
-        if (!r) {
+        if (!removals.some((r) => r.line === lines[i])) {
           keep.push(lines[i]);
           continue;
         }
@@ -487,6 +491,7 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
         }
       }
     }
+    for (const r of removals) ctx.store.deleteState(lineKey(ctx.vault, r.id));
   }
   return { tag, note: path, link: `[[${ctx.linker.linkText(path)}]]`, ...(created ? { created } : {}), moved, left_in_unrouted: Math.max(0, left) };
 }
@@ -506,7 +511,8 @@ export interface ReadNote {
  */
 export function readNote(ctx: FileContext, query: string, maxChars: number): ReadNote {
   const notes = ctx.index.notes();
-  const found = findIn(ctx, notes, query);
+  // A name or alias only ever means a note kindle-mcp may read; an explicit path to one it may not is refused below.
+  const found = findIn(ctx, isPathLike(query) ? notes : notes.filter((n) => !n.excluded && !n.optOut), query);
   if (!found) throw new VaultError(`No note named or at '${query}'. kindle_search_vault finds notes by their words.`);
   if ("ambiguous" in found) throw new VaultError(`More than one note is called that: ${found.ambiguous.join(", ")}. Pass the path of the one you mean.`);
   const n = notes.find((x) => x.path === found.path)!;

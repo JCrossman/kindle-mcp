@@ -37,7 +37,7 @@ export interface VaultStepResult {
   /** Book notes deleted in Obsidian and left deleted. */
   deleted_book_notes: string[];
   filed: Array<{ tag: string; to: string; count: number }>;
-  unrouted: Array<{ tag: string; arg: string; reason: string; to: string } & Suggestion>;
+  unrouted: Array<{ tag: string; arg: string; reason: string; to: string; ambiguous?: string[]; gone?: string } & Suggestion>;
   /** Tags no command or note answers to this time, and the one question to put to the user. */
   unknown_tags?: { in: string; tags: string[]; ask_user: string };
   /** Commands a 1.0 router had already written up. */
@@ -150,9 +150,8 @@ export function askAboutTags(entries: VaultStepResult["unrouted"]): VaultStepRes
   const typos: string[] = [];
   for (const e of byTag.values()) {
     const tag = `@${e.tag}`;
-    const many = /^matches \d+ notes \((.*)\); tell Claude/.exec(e.reason);
-    if (many) questions.push(`which of ${quoted(many[1].split(", "))} does ${tag} mean?`);
-    else if (e.reason.startsWith("was going to ")) questions.push(`${tag}'s note is gone: which note should it go to now?`);
+    if (e.ambiguous?.length) questions.push(`which of ${quoted(e.ambiguous)} does ${tag} mean?`);
+    else if (e.gone) questions.push(`${tag}'s note is gone: which note should it go to now?`);
     else if (e.did_you_mean) typos.push(`${tag} looks like @${e.did_you_mean}: fix the note on the Kindle and the next sync files it.`);
     else if (e.candidates?.length) questions.push(`does ${tag} mean your note ${quoted(e.candidates)}?`);
     else questions.push(`which note should ${tag} go to?`);
@@ -222,7 +221,10 @@ export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions =
           if (!cfg.autoFile) continue;
           const f = fileCommand(ctx, store.getHighlight(h.id)!, c);
           if (f.outcome === "found") result.found_earlier++;
-          else if (f.outcome === "unrouted") result.unrouted.push({ tag: f.tag, arg: f.arg, reason: f.reason ?? "", to: f.to, ...f.suggestion });
+          else if (f.outcome === "unrouted") {
+            const { tag, arg, reason = "", to, suggestion, ambiguous, gone } = f;
+            result.unrouted.push({ tag, arg, reason, to, ...suggestion, ...(ambiguous ? { ambiguous } : {}), ...(gone ? { gone } : {}) });
+          }
           else filed.set(`${f.tag}\n${f.to}`, (filed.get(`${f.tag}\n${f.to}`) ?? 0) + 1);
         }
       }
