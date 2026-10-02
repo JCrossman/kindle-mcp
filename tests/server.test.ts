@@ -13,6 +13,7 @@ import { createServer, parseSince, routePendingPrompt, serverInstructions, weekl
 import { saveSession } from "../src/notebook/session.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";
+import { importClippings } from "../src/sync.js";
 import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
 
 const FX = join(__dirname, "fixtures");
@@ -345,6 +346,36 @@ describe("MCP server", () => {
     expect(read.text).toContain("> A line about plans.");
     expect((await call(client, "kindle_read_note", { note: "Nope" })).data.error).toMatch(/No note named/);
     expect((await call(client, "kindle_teach_tag", { tag: "road" })).data).toMatchObject({ ok: true, forgotten: true });
+  });
+
+  it("walks a new reader through setup in a chat: sign in, then the vault, then the first sync", async () => {
+    const home = mkdtempSync(join(tmpdir(), "kindle-mcp-"));
+    const cfg = loadConfig({ KINDLE_MCP_HOME: home, KINDLE_NOTEBOOK_BASE: amazon.base, KINDLE_REQUEST_DELAY: "0" });
+    const { client } = await link(cfg, home);
+    let next = (await call(client, "kindle_status")).data.next_step;
+    expect(next).toMatch(/offer kindle_login/);
+    expect(next).toMatch(/call kindle_status again/);
+
+    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    next = (await call(client, "kindle_status")).data.next_step;
+    expect(next).toMatch(/whether they keep notes in Obsidian/);
+    expect(next).toMatch(/kindle_set_vault/);
+
+    // Highlights from a clippings file, or a first sync cut off before it read the library, aren't a first sync.
+    const store = new Store(cfg.dbPath);
+    importClippings(store, join(FX, "My Clippings.txt"), () => {});
+    store.finishRun(store.startRun("cloud"));
+    store.close();
+    const status = (await call(client, "kindle_status")).data;
+    expect(status.highlights).toBeGreaterThan(0);
+    expect(status.next_step).toMatch(/whether they keep notes in Obsidian/);
+
+    const vault = join(home, "Notes");
+    mkdirSync(join(vault, ".obsidian"), { recursive: true });
+    expect((await call(client, "kindle_set_vault", { path: vault })).data).toMatchObject({ ok: true, obsidian_vault: vault });
+    expect((await call(client, "kindle_status")).data.next_step).toBe("Call kindle_sync to pull the user's highlights.");
+    expect((await call(client, "kindle_sync")).data.highlights_new).toBeGreaterThan(0);
+    expect(existsSync(join(vault, "Kindle", "Thinking, Fast and Slow.md"))).toBe(true);
   });
 
   it("parses since spans and dates", () => {

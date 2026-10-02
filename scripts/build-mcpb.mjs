@@ -36,13 +36,13 @@ const manifest = {
   name: pkg.name,
   display_name: "Kindle highlights",
   version: pkg.version,
-  description: "Your Kindle highlights and notes as tools for Claude, plus a router for @commands you type on the Kindle.",
+  description: "Your Kindle highlights and notes in Claude and in your Obsidian vault. Claude acts on the notes you type on the Kindle.",
   long_description:
-    "Syncs read.amazon.com/notebook into a local SQLite store with full-text search and exposes it as MCP tools. " +
-    "With an Obsidian vault, each sync adds new highlights to book notes linked to your own notes, files @todo, " +
-    "@quote and @project, and hands @post and @research to Claude, which saves them as linked notes. Sign in once " +
-    "with the kindle_login tool; your Amazon password is never seen or stored. Everything runs on this machine; " +
-    "nothing is sent anywhere but Amazon.",
+    "With Obsidian, the highlights and notes from your Kindle Store books land in your vault, linked to the notes " +
+    "you already have. Type a short note on a highlight, like @research, @post or @todo, and Claude carries it out " +
+    "and saves the result in Obsidian, linked back to the highlight (or in the chat, without Obsidian). To start, " +
+    "say \"Set up my Kindle\" in a chat. Your Amazon password is never seen or stored, and your highlights stay on " +
+    "this computer: nothing is sent anywhere but Amazon, apart from what you share with Claude in a conversation.",
   author: { name: "Jeremy Crossman", url: "https://github.com/JCrossman" },
   repository: { type: "git", url: "https://github.com/JCrossman/kindle-mcp" },
   homepage: "https://github.com/JCrossman/kindle-mcp",
