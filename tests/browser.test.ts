@@ -75,14 +75,18 @@ describe.skipIf(!available)("browser paths", () => {
  * unless the browser calls itself HeadlessChrome (as real Amazon appears to treat it).
  */
 async function startSignInAmazon() {
-  const state = { valid: "t1", remembered: true, userSignsIn: true, captcha: false, stuck: false, notebookAgents: [] as string[], signInAgents: [] as string[] };
+  const state = { valid: "t1", remembered: true, userSignsIn: true, captcha: false, stuck: false, hiddenDecoys: false, notebookAgents: [] as string[], signInAgents: [] as string[] };
   const srv = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const cookies = req.headers.cookie ?? "";
     const agent = req.headers["user-agent"] ?? "";
     if (url.pathname === "/ap/signin") {
       state.signInAgents.push(agent);
-      if (state.stuck) {
+      if (state.hiddenDecoys) {
+        // A code prompt behind hidden copies of other fields, earlier in the page.
+        const hidden = '<input type="password" style="display:none"><img id="auth-captcha-image" style="display:none">';
+        res.writeHead(200, { "Content-Type": "text/html" }).end(`<html><body>${hidden}<form><input id="auth-mfa-otpcode"></form></body></html>`);
+      } else if (state.stuck) {
         res.writeHead(200, { "Content-Type": "text/html" }).end("<html><body>One moment…</body></html>");
       } else if (state.captcha) {
         res.writeHead(200, { "Content-Type": "text/html" }).end('<html><body><form action="/errors/validateCaptcha"><input id="captchacharacters"></form></body></html>');
@@ -174,6 +178,13 @@ describe.skipIf(!available)("renewing a stale sign-in", () => {
       expect(Date.now() - started).toBeLessThan(20_000);
       expect(lastRenewal(store)).toMatchObject({ ok: false, outcome: "captcha" });
 
+      amazon.state.captcha = false;
+      amazon.state.hiddenDecoys = true; // hidden fields earlier in the page don't hide the one Amazon shows
+      started = Date.now();
+      expect(await refreshSession(cfg, 15_000)).toMatchObject({ ok: false, outcome: "code" });
+      expect(Date.now() - started).toBeLessThan(12_000);
+
+      amazon.state.hiddenDecoys = false;
       amazon.state.stuck = true; // or a page that is none of these, until time runs out
       expect(await refreshSession(cfg, 5_000)).toMatchObject({ ok: false, outcome: "timeout", where: expect.stringMatching(/\/ap\/signin$/) });
       store.close();

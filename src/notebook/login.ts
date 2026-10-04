@@ -95,9 +95,15 @@ function place(url: string): string | undefined {
 
 const firstLine = (e: unknown): string => String((e as Error)?.message ?? e).split("\n")[0].slice(0, 200);
 
+/**
+ * The visible elements a selector list matches. Playwright's waitForSelector and first() look at
+ * the first match in page order only, and Amazon's pages can hold hidden copies of these fields.
+ */
+const visibleIn = (page: Page, selector: string) => page.locator(selector).filter({ visible: true });
+
 /** Which of Amazon's questions a page that isn't the notebook is asking. */
 async function amazonAsks(page: Page): Promise<Renewal> {
-  const shown = (selector: string): Promise<boolean> => page.locator(selector).first().isVisible().catch(() => false);
+  const shown = async (selector: string): Promise<boolean> => (await visibleIn(page, selector).count().catch(() => 0)) > 0;
   const where = place(page.url());
   if ((await shown(S.CAPTCHA_PROMPT)) || /captcha/i.test(where ?? "")) return { ok: false, outcome: "captcha", where };
   if ((await shown(S.CODE_PROMPT)) || /\/ap\/(mfa|cvf)/.test(where ?? "")) return { ok: false, outcome: "code", where };
@@ -129,7 +135,7 @@ export async function refreshSession(cfg: Config, timeoutMs = 25_000): Promise<R
   try {
     page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(S.libraryUrl(cfg.notebookBase), { waitUntil: "domcontentloaded", timeout: left() });
-    await page.waitForSelector(`${S.LIBRARY_ROOT}, ${S.SIGNIN_FORM}`, { timeout: left() });
+    await visibleIn(page, `${S.LIBRARY_ROOT}, ${S.SIGNIN_FORM}`).first().waitFor({ timeout: left() });
     if (!(await page.$(S.LIBRARY_ROOT))) return await amazonAsks(page);
     await saveBrowserSession(cfg, ctx);
     return { ok: true, outcome: "renewed" };
