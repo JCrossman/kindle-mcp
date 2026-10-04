@@ -9,15 +9,17 @@ const FX = fileURLToPath(new URL("../fixtures", import.meta.url));
 export interface FakeAmazon {
   base: string;
   seenCookies: string[];
+  seenAgents: string[];
   redirects: number;
   close(): Promise<void>;
 }
 
 export async function startFakeAmazon(): Promise<FakeAmazon> {
-  const state = { seenCookies: [] as string[], redirects: 0 };
+  const state = { seenCookies: [] as string[], seenAgents: [] as string[], redirects: 0 };
   const server: Server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     state.seenCookies.push(req.headers.cookie ?? "");
+    state.seenAgents.push(req.headers["user-agent"] ?? "");
     if (!url.searchParams.has("hop")) {
       // A benign redirect (think trailing slash or regional host): the fetcher must follow it with cookies.
       url.searchParams.set("hop", "1");
@@ -44,6 +46,9 @@ export async function startFakeAmazon(): Promise<FakeAmazon> {
     base,
     get seenCookies() {
       return state.seenCookies;
+    },
+    get seenAgents() {
+      return state.seenAgents;
     },
     get redirects() {
       return state.redirects;

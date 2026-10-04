@@ -11,11 +11,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
 import { AuthRequired } from "../src/notebook/client.js";
-import { launchContext } from "../src/notebook/fetchers.js";
-import { login } from "../src/notebook/login.js";
+import { launchContext, userAgentOf } from "../src/notebook/fetchers.js";
+import { login, refreshSession } from "../src/notebook/login.js";
 import { loadSession } from "../src/notebook/session.js";
 import { Store } from "../src/store.js";
-import { syncCloud } from "../src/sync.js";
+import { lastRenewal, syncCloud } from "../src/sync.js";
 
 const FX = join(__dirname, "fixtures");
 
@@ -71,15 +71,26 @@ describe.skipIf(!available)("browser paths", () => {
 
 /**
  * A stand-in with Amazon's shape of sign-in: a short-lived token cookie, a long-lived "remember
- * me" cookie, and a sign-in page that sends a remembered browser straight back with a new token.
+ * me" cookie, and a sign-in page that sends a remembered browser straight back with a new token,
+ * unless the browser calls itself HeadlessChrome (as real Amazon appears to treat it).
  */
 async function startSignInAmazon() {
-  const state = { valid: "t1", remembered: true, userSignsIn: true };
+  const state = { valid: "t1", remembered: true, userSignsIn: true, captcha: false, stuck: false, hiddenDecoys: false, notebookAgents: [] as string[], signInAgents: [] as string[] };
   const srv = createHttpServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const cookies = req.headers.cookie ?? "";
+    const agent = req.headers["user-agent"] ?? "";
     if (url.pathname === "/ap/signin") {
-      if (state.remembered && cookies.includes("remember=yes")) {
+      state.signInAgents.push(agent);
+      if (state.hiddenDecoys) {
+        // A code prompt behind hidden copies of other fields, earlier in the page.
+        const hidden = '<input type="password" style="display:none"><img id="auth-captcha-image" style="display:none">';
+        res.writeHead(200, { "Content-Type": "text/html" }).end(`<html><body>${hidden}<form><input id="auth-mfa-otpcode"></form></body></html>`);
+      } else if (state.stuck) {
+        res.writeHead(200, { "Content-Type": "text/html" }).end("<html><body>One moment…</body></html>");
+      } else if (state.captcha) {
+        res.writeHead(200, { "Content-Type": "text/html" }).end('<html><body><form action="/errors/validateCaptcha"><input id="captchacharacters"></form></body></html>');
+      } else if (state.remembered && cookies.includes("remember=yes") && !agent.includes("HeadlessChrome")) {
         res.writeHead(302, { Location: "/notebook", "Set-Cookie": `token=${state.valid}; Path=/` }).end();
       } else {
         // A password form; in the first login the "user" submits it at once.
@@ -99,6 +110,7 @@ async function startSignInAmazon() {
       res.writeHead(302, { Location: "/ap/signin" }).end();
       return;
     }
+    state.notebookAgents.push(agent);
     const asin = url.searchParams.get("asin");
     const body = asin === "B0FAKE0004" ? readFileSync(join(FX, "annotations.html"))
       : asin ? '<html><body><input type="hidden" class="kp-notebook-annotations-next-page-start" value=""></body></html>'
@@ -115,33 +127,69 @@ async function startSignInAmazon() {
 }
 
 describe.skipIf(!available)("renewing a stale sign-in", () => {
-  it("renews it from the saved browser profile without a window, and says so when Amazon wants the password", async () => {
+  it("starts the hidden browser under its windowed name, so a browser Amazon remembers gets through", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "kindle-ua-"));
+    const ctx = await launchContext(dir, true, process.env.KINDLE_BROWSER_PATH ?? null);
+    try {
+      const ua = await userAgentOf(ctx);
+      expect(ua).toMatch(/ Chrome\/\d+/);
+      expect(ua).not.toContain("Headless");
+    } finally {
+      await ctx.close();
+    }
+  }, 60_000);
+
+  it("renews it from the saved browser profile without a window, and says what Amazon asked for when it can't", async () => {
     const amazon = await startSignInAmazon();
     try {
       const home = mkdtempSync(join(tmpdir(), "kindle-renew-"));
       const cfg = loadConfig({ KINDLE_MCP_HOME: home, KINDLE_NOTEBOOK_BASE: amazon.base, KINDLE_REQUEST_DELAY: "0", KINDLE_BROWSER_PATH: process.env.KINDLE_BROWSER_PATH });
       expect(await login(cfg, 30_000, true)).toBe(true);
+      const saved = loadSession(cfg.sessionPath)!;
+      expect(saved.userAgent).toMatch(/ Chrome\/\d+/);
       const store = new Store(cfg.dbPath);
       expect(await syncCloud(cfg, store, { log: () => {} })).not.toHaveProperty("session_refreshed");
+      expect(amazon.state.notebookAgents.at(-1)).toBe(saved.userAgent); // the plain-HTTP sync sends the browser's own name
 
       amazon.state.valid = "t2"; // the short-lived token expires; Amazon still remembers the browser
       const renewed = await syncCloud(cfg, store, { full: true, log: () => {} });
       expect(renewed).toMatchObject({ books_seen: 2, session_refreshed: true });
+      expect(amazon.state.signInAgents.some((a) => a.includes("HeadlessChrome"))).toBe(false);
       const session = loadSession(cfg.sessionPath)!;
       expect(session.cookies.find((c) => c.name === "token")?.value).toBe("t2");
       expect(session.signedInAt).toBeTruthy();
+      expect(lastRenewal(store)).toMatchObject({ ok: true, outcome: "renewed" });
 
       amazon.state.valid = "t3"; // now Amazon forgets the browser too: only the user can sign in
       amazon.state.remembered = false;
       amazon.state.userSignsIn = false;
-      const started = Date.now();
+      let started = Date.now();
       const err = await syncCloud(cfg, store, { log: () => {} }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(AuthRequired);
       expect((err as AuthRequired).reason).toBe("expired");
-      expect(Date.now() - started).toBeLessThan(15_000); // the password form ends the attempt, not the timeout
+      expect((err as Error).message).toMatch(/couldn't be renewed without you: Amazon asked the hidden browser that renews it for your password\./);
+      expect(Date.now() - started).toBeLessThan(20_000); // the password form ends the attempt, not the timeout
+      expect(lastRenewal(store)).toMatchObject({ ok: false, outcome: "password", where: expect.stringMatching(/\/ap\/signin$/) });
+
+      amazon.state.captcha = true; // or Amazon wants proof it's a person
+      started = Date.now();
+      const puzzle = await syncCloud(cfg, store, { log: () => {} }).catch((e: unknown) => e);
+      expect((puzzle as Error).message).toMatch(/a puzzle to prove it's a person/);
+      expect(Date.now() - started).toBeLessThan(20_000);
+      expect(lastRenewal(store)).toMatchObject({ ok: false, outcome: "captcha" });
+
+      amazon.state.captcha = false;
+      amazon.state.hiddenDecoys = true; // hidden fields earlier in the page don't hide the one Amazon shows
+      started = Date.now();
+      expect(await refreshSession(cfg, 15_000)).toMatchObject({ ok: false, outcome: "code" });
+      expect(Date.now() - started).toBeLessThan(12_000);
+
+      amazon.state.hiddenDecoys = false;
+      amazon.state.stuck = true; // or a page that is none of these, until time runs out
+      expect(await refreshSession(cfg, 5_000)).toMatchObject({ ok: false, outcome: "timeout", where: expect.stringMatching(/\/ap\/signin$/) });
       store.close();
     } finally {
       await amazon.close();
     }
-  }, 90_000);
+  }, 120_000);
 });

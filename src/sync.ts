@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 
 import { parseClippings } from "./clippings.js";
 import type { Config } from "./config.js";
-import { AuthRequired, DeadlineReached, NotebookClient } from "./notebook/client.js";
+import { AuthRequired, DeadlineReached, NotebookClient, type Renewal } from "./notebook/client.js";
 import { openFetcher, type FetcherHandle } from "./notebook/fetchers.js";
 import { refreshSession } from "./notebook/login.js";
 import { loadSession } from "./notebook/session.js";
@@ -21,7 +21,7 @@ export interface SyncOptions {
   /** Cancels between pages (the MCP client gave up on the call). */
   signal?: AbortSignal;
   /** Renews a refused sign-in without the user (default refreshSession; tests pass a stand-in). */
-  refresh?: (cfg: Config, timeoutMs: number) => Promise<boolean>;
+  refresh?: (cfg: Config, timeoutMs: number) => Promise<Renewal>;
 }
 
 export interface SyncResult extends SyncStats {
@@ -37,15 +37,27 @@ const FULL_PASS = "sync:full_pass_started";
 
 const fresh = (): SyncStats => ({ books_seen: 0, books_synced: 0, highlights_new: 0, highlights_updated: 0 });
 
-/** A renewal starts only with this much of the budget left, and gets at most RENEW_MS. */
+/** A renewal starts only with this much of the budget left, and gets at most RENEW_MS (two browser starts and Amazon's redirects). */
 const RENEW_MIN_LEFT_MS = 15_000;
-const RENEW_MS = 20_000;
+const RENEW_MS = 25_000;
+
+/** app_state key: how the last renewal without the user went, as JSON ({ at, ...Renewal }). */
+const LAST_RENEWAL = "signin:last_renewal";
+
+/** How the last renewal without the user went, if one was ever tried. */
+export function lastRenewal(store: Store): (Renewal & { at: string }) | null {
+  try {
+    return JSON.parse(store.getState(LAST_RENEWAL) ?? "null");
+  } catch {
+    return null;
+  }
+}
 
 /** The sign-in error for this data folder: nothing saved yet, or saved (or unreadable) and refused. */
-export function signInNeeded(cfg: Config): AuthRequired {
+export function signInNeeded(cfg: Config, renewal?: Renewal): AuthRequired {
   if (!existsSync(cfg.sessionPath)) return new AuthRequired("missing", { home: cfg.home });
   const session = loadSession(cfg.sessionPath);
-  return new AuthRequired("expired", { savedAt: session?.signedInAt ?? session?.savedAt });
+  return new AuthRequired("expired", { savedAt: session?.signedInAt ?? session?.savedAt, ...(renewal ? { renewal } : {}) });
 }
 
 /** How long a renewal may take now; 0 on the browser path, when cancelled, with nothing saved, or short of time. */
@@ -63,6 +75,8 @@ function renewalBudget(cfg: Config, opts: SyncOptions): number {
  */
 class NotebookReader {
   private tried = false;
+  /** The renewal this sync tried, if any. */
+  renewal?: Renewal;
   /** The sign-in was renewed during this sync. */
   renewed = false;
   private handle!: FetcherHandle;
@@ -94,7 +108,8 @@ class NotebookReader {
       const budget = renewalBudget(this.cfg, this.opts);
       if (!budget) throw e;
       await this.handle.close(); // saves nothing: the reply sent it to sign-in
-      if (!(await (this.opts.refresh ?? refreshSession)(this.cfg, budget))) throw e;
+      this.renewal = await (this.opts.refresh ?? refreshSession)(this.cfg, budget);
+      if (!this.renewal.ok) throw e;
       this.renewed = true;
       await this.connect(); // the fresh cookies
       return fn(this.nb);
@@ -117,9 +132,10 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
   const runId = store.startRun("cloud");
   let partial = false;
   let remaining = 0;
+  let reader: NotebookReader | undefined;
   try {
-    const reader = await NotebookReader.open(cfg, opts);
-    const renewed = (): Partial<SyncResult> => (reader.renewed ? { session_refreshed: true } : {});
+    reader = await NotebookReader.open(cfg, opts);
+    const renewed = (): Partial<SyncResult> => (reader!.renewed ? { session_refreshed: true } : {});
     try {
       let library;
       try {
@@ -148,7 +164,7 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
       for (const [i, book] of todo.entries()) {
         let highlights;
         try {
-          highlights = await reader.read((nb) => nb.annotations(book.asin!));
+          highlights = await reader!.read((nb) => nb.annotations(book.asin!));
         } catch (e) {
           if (!(e instanceof DeadlineReached)) throw e;
           partial = true;
@@ -172,9 +188,11 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
     store.finishRun(runId, stats);
     return { ...stats, ...(partial ? { partial, books_remaining: remaining } : {}), ...renewed() };
   } catch (e) {
-    const err = e instanceof AuthRequired ? signInNeeded(cfg) : e; // a sign-in refused mid-sync too
+    const err = e instanceof AuthRequired ? signInNeeded(cfg, reader?.renewal) : e; // a sign-in refused mid-sync too
     store.finishRun(runId, { ...stats, error: String((err as Error).message ?? err).slice(0, 500) });
     throw err;
+  } finally {
+    if (reader?.renewal) store.setState(LAST_RENEWAL, JSON.stringify({ at: nowIso(), ...reader.renewal }));
   }
 }
 

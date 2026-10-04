@@ -12,7 +12,9 @@ export interface FetcherHandle {
 }
 
 // Navigation-style headers, the same shape a `page.goto` sends. If Amazon starts refusing the
-// plain-HTTP path, compare against the notebook XHR in a HAR capture and adjust here.
+// plain-HTTP path, compare against the notebook XHR in a HAR capture and adjust here. The user agent
+// is the one the browser that saved the sign-in reported (Session.userAgent); this one is for
+// sessions saved before 1.3.2.
 const HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
@@ -44,7 +46,7 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
         const res = await fetch(current, {
           method: "GET",
           redirect: "manual",
-          headers: { ...HEADERS, Cookie: cookieHeader(jar.cookies, current), Referer: `${cfg.notebookBase}/notebook` },
+          headers: { ...HEADERS, ...(jar.userAgent ? { "User-Agent": jar.userAgent } : {}), Cookie: cookieHeader(jar.cookies, current), Referer: `${cfg.notebookBase}/notebook` },
         });
         const setCookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
         if (setCookies.length && applySetCookies(jar.cookies, setCookies, current)) dirty = true;
@@ -68,10 +70,26 @@ export function cookieFetcher(cfg: Config, session: Session | null = loadSession
   };
 }
 
+/** The name a browser without a window gives itself, as the same browser with a window gives it. */
+export function windowedUserAgent(userAgent: string): string {
+  return userAgent.replace(/HeadlessChrome\//g, "Chrome/");
+}
+
+/** The user agent of the browser behind a context, as its pages report it. */
+export async function userAgentOf(ctx: BrowserContext): Promise<string> {
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  return String(await page.evaluate("navigator.userAgent"));
+}
+
 /**
  * Launch a Chromium-based browser with our separate profile: an explicit executable if configured
  * (KINDLE_BROWSER_PATH), else the user's Chrome, then Edge, then a Playwright-managed Chromium.
  * With a deadline (epoch ms), no attempt runs past it; otherwise Playwright's own launch timeout applies.
+ *
+ * Without a window, Chrome names itself "HeadlessChrome" in the user agent of every request, and
+ * Amazon treats that browser as a stranger even with the profile it remembers. So a headless
+ * launch is made twice: once to read the browser's own user agent, then with the windowed name
+ * (Chrome's `--user-agent` switch, which keeps the browser's own client hints, unlike an override).
  */
 export async function launchContext(
   profileDir: string,
@@ -86,18 +104,33 @@ export async function launchContext(
     { channel: "msedge" },
     {},
   ];
+  const timeLeft = (): { timeout?: number } => (deadline === undefined ? {} : { timeout: deadline - Date.now() });
   const errors: string[] = [];
   for (const opts of attempts) {
-    const timeout = deadline === undefined ? undefined : deadline - Date.now();
-    if (timeout !== undefined && timeout <= 0) {
+    if ((timeLeft().timeout ?? 1) <= 0) {
       errors.push("out of time");
       break;
     }
+    let ctx: BrowserContext;
     try {
-      return await chromium.launchPersistentContext(profileDir, { ...opts, headless, ...(timeout === undefined ? {} : { timeout }) });
+      ctx = await chromium.launchPersistentContext(profileDir, { ...opts, headless, ...timeLeft() });
     } catch (e) {
       errors.push(`${opts.executablePath ?? opts.channel ?? "chromium"}: ${(e as Error).message.split("\n")[0]}`);
+      continue;
     }
+    if (!headless) return ctx;
+    let userAgent: string;
+    try {
+      userAgent = await userAgentOf(ctx);
+    } catch (e) {
+      await ctx.close().catch(() => {});
+      throw e;
+    }
+    const windowed = windowedUserAgent(userAgent);
+    if (windowed === userAgent) return ctx;
+    await ctx.close();
+    if ((timeLeft().timeout ?? 1) <= 0) throw new Error("Out of time starting the browser.");
+    return chromium.launchPersistentContext(profileDir, { ...opts, headless, args: [`--user-agent=${windowed}`], ...timeLeft() });
   }
   throw new Error(
     "No browser found. Install Google Chrome or Microsoft Edge, set KINDLE_BROWSER_PATH to a Chromium-based browser, " +

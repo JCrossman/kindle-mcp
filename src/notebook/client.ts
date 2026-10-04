@@ -19,11 +19,49 @@ export type Fetcher = (url: string) => Promise<FetchResult>;
 /** Why a sync needs the user: nothing saved yet, or Amazon wants the password again. */
 export type SignInReason = "missing" | "expired";
 
+/** How an attempt to renew the sign-in without the user ended. */
+export type RenewalOutcome =
+  | "renewed"
+  | "password"
+  | "code"
+  | "captcha"
+  | "timeout"
+  | "no-browser"
+  | "profile-busy"
+  | "no-profile"
+  | "error";
+
+export interface Renewal {
+  ok: boolean;
+  outcome: RenewalOutcome;
+  /** Host and path the browser was on when it stopped (never the query string). */
+  where?: string;
+  /** First line of the error, for no-browser and error. */
+  detail?: string;
+}
+
+/** A failed renewal in the reader's words. */
+export function renewalWords(r: Renewal): string {
+  switch (r.outcome) {
+    case "password": return "Amazon asked the hidden browser that renews it for your password";
+    case "code": return "Amazon asked the hidden browser that renews it for a verification code";
+    case "captcha": return "Amazon showed the hidden browser that renews it a puzzle to prove it's a person";
+    case "timeout": return `Amazon's page didn't finish loading in the hidden browser that renews it${r.where ? ` (it stopped at ${r.where})` : ""}`;
+    case "no-browser": return `the hidden browser that renews it couldn't start${r.detail ? ` (${r.detail})` : ""}`;
+    case "profile-busy": return "the Kindle sign-in window was still open";
+    case "no-profile": return "there's no saved browser to renew it from yet";
+    case "error": return `the hidden browser that renews it hit an error${r.detail ? ` (${r.detail})` : ""}`;
+    case "renewed": return "it was renewed";
+  }
+}
+
 export interface SignInDetail {
   /** The data folder that was searched for a saved sign-in. */
   home?: string;
   /** When the saved sign-in was made or last renewed (ISO). */
   savedAt?: string;
+  /** The renewal this sync tried, if it tried one. */
+  renewal?: Renewal;
 }
 
 function localTime(iso: string): string {
@@ -39,8 +77,9 @@ function signInMessage(reason: SignInReason, detail: SignInDetail): string {
     return `No Amazon sign-in is saved yet${detail.home ? ` (looked in ${detail.home})` : ""}. ${how} Then sync again.`;
   }
   const when = detail.savedAt ? ` (the saved sign-in is from ${localTime(detail.savedAt)})` : "";
+  const why = detail.renewal && !detail.renewal.ok ? `: ${renewalWords(detail.renewal)}` : "";
   return (
-    `Amazon wants you to sign in again${when}, and the sign-in couldn't be renewed without you. In Claude, say ` +
+    `Amazon wants you to sign in again${when}, and the sign-in couldn't be renewed without you${why}. In Claude, say ` +
     '"Sign me in to Kindle" and tick "Keep me signed in"; on the command line, run `kindle-mcp login`. Nothing is ' +
     "lost: the next sync catches up."
   );

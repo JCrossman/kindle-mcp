@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadConfig, type Config } from "../src/config.js";
-import { AuthRequired } from "../src/notebook/client.js";
+import { AuthRequired, type Renewal } from "../src/notebook/client.js";
+import { windowedUserAgent } from "../src/notebook/fetchers.js";
 import { loadSession, saveSession } from "../src/notebook/session.js";
 import { Store } from "../src/store.js";
-import { syncCloud } from "../src/sync.js";
+import { lastRenewal, syncCloud } from "../src/sync.js";
 import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
 
 const FX = join(__dirname, "fixtures");
@@ -54,12 +55,13 @@ function setup(saved: string | null, base = amazon.base): { cfg: Config; store: 
 }
 
 /** A stand-in for the browser renewal: records its calls and, if told to, saves working cookies. */
-function renewal(works: boolean) {
+function renewal(works: boolean, failure: Renewal = { ok: false, outcome: "password", where: "www.amazon.com/ap/signin" }) {
   const calls: number[] = [];
-  const refresh = async (cfg: Config, timeoutMs: number): Promise<boolean> => {
+  const refresh = async (cfg: Config, timeoutMs: number): Promise<Renewal> => {
     calls.push(timeoutMs);
-    if (works) saveSession(cfg.sessionPath, { savedAt: "2026-09-25T09:00:00.000Z", signedInAt: "2026-09-25T09:00:00.000Z", cookies: cookie("abc") });
-    return works;
+    if (!works) return failure;
+    saveSession(cfg.sessionPath, { savedAt: "2026-09-25T09:00:00.000Z", signedInAt: "2026-09-25T09:00:00.000Z", cookies: cookie("abc") });
+    return { ok: true, outcome: "renewed" };
   };
   return { calls, refresh };
 }
@@ -72,7 +74,8 @@ describe("a refused sign-in", () => {
     expect(stats).toMatchObject({ books_seen: 2, highlights_new: 3, session_refreshed: true });
     expect(calls).toHaveLength(1);
     expect(calls[0]).toBeGreaterThan(0);
-    expect(calls[0]).toBeLessThanOrEqual(20_000);
+    expect(calls[0]).toBeLessThanOrEqual(25_000);
+    expect(lastRenewal(store)).toMatchObject({ ok: true, outcome: "renewed", at: expect.any(String) });
     const session = loadSession(cfg.sessionPath)!;
     expect(session.signedInAt).toBe("2026-09-25T09:00:00.000Z"); // kept through the cookie write-back
     expect(session.cookies.some((c) => c.name === "session-token" && c.value === "rotated")).toBe(true);
@@ -88,6 +91,8 @@ describe("a refused sign-in", () => {
     expect((err as AuthRequired).reason).toBe("expired");
     expect((err as Error).message).toMatch(/the saved sign-in is from 2026-09-2\d/);
     expect((err as Error).message).toMatch(/Sign me in to Kindle.*Keep me signed in.*kindle-mcp login/);
+    expect((err as Error).message).toMatch(/without you: Amazon asked the hidden browser that renews it for your password\./);
+    expect(lastRenewal(store)).toMatchObject({ ok: false, outcome: "password", where: "www.amazon.com/ap/signin" });
     expect(calls).toHaveLength(1);
     expect(readFileSync(cfg.sessionPath, "utf8")).toBe(before); // the refusal's cookie-clearing reply was not saved
     expect(store.status().last_run?.error).toMatch(/Amazon wants you to sign in again/);
@@ -106,7 +111,7 @@ describe("a refused sign-in", () => {
   it("is tried only once even when the renewal claims success", async () => {
     const { cfg, store } = setup("stale");
     const calls: number[] = [];
-    const refresh = async (_cfg: Config, t: number): Promise<boolean> => (calls.push(t), true); // but saves nothing
+    const refresh = async (_cfg: Config, t: number): Promise<Renewal> => (calls.push(t), { ok: true, outcome: "renewed" }); // but saves nothing
     await expect(syncCloud(cfg, store, { log: () => {}, refresh })).rejects.toBeInstanceOf(AuthRequired);
     expect(calls).toHaveLength(1);
     store.close();
@@ -131,11 +136,48 @@ describe("a refused sign-in", () => {
     store.close();
   });
 
+  it("says why the hidden browser couldn't renew it, in the reader's words", async () => {
+    const cases: Array<[Renewal, RegExp]> = [
+      [{ ok: false, outcome: "code" }, /for a verification code\./],
+      [{ ok: false, outcome: "captcha" }, /a puzzle to prove it's a person\./],
+      [{ ok: false, outcome: "timeout", where: "www.amazon.com/ap/signin" }, /didn't finish loading .*\(it stopped at www\.amazon\.com\/ap\/signin\)\./],
+      [{ ok: false, outcome: "no-browser", detail: "No browser found." }, /couldn't start \(No browser found\.\)\./],
+      [{ ok: false, outcome: "profile-busy" }, /the Kindle sign-in window was still open\./],
+    ];
+    for (const [result, words] of cases) {
+      const { cfg, store } = setup("stale");
+      const err = await syncCloud(cfg, store, { log: () => {}, refresh: renewal(false, result).refresh }).catch((e: unknown) => e);
+      expect((err as Error).message).toMatch(words);
+      expect(lastRenewal(store)?.outcome).toBe(result.outcome);
+      store.close();
+    }
+  });
+
   it("isn't renewed when too little of the budget is left to finish", async () => {
     const { cfg, store } = setup("stale");
     const { calls, refresh } = renewal(true);
     await expect(syncCloud(cfg, store, { log: () => {}, refresh, deadline: Date.now() + 5_000 })).rejects.toBeInstanceOf(AuthRequired);
     expect(calls).toHaveLength(0);
+    expect(lastRenewal(store)).toBeNull();
+    store.close();
+  });
+});
+
+describe("the browser's name", () => {
+  it("drops 'Headless' the way the same browser with a window names itself", () => {
+    const headless = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.0.0 Safari/537.36";
+    expect(windowedUserAgent(headless)).toBe(headless.replace("HeadlessChrome/", "Chrome/"));
+    expect(windowedUserAgent(windowedUserAgent(headless))).toBe(windowedUserAgent(headless));
+  });
+
+  it("is sent by the plain-HTTP sync as the browser that saved the sign-in reported it", async () => {
+    const { cfg, store } = setup(null);
+    const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+    saveSession(cfg.sessionPath, { savedAt: "2026-09-20T08:00:00.000Z", userAgent, cookies: cookie("abc") });
+    const seen = amazon.seenAgents.length;
+    await syncCloud(cfg, store, { log: () => {} });
+    expect(amazon.seenAgents.slice(seen).every((a) => a === userAgent)).toBe(true);
+    expect(loadSession(cfg.sessionPath)?.userAgent).toBe(userAgent); // kept through the cookie write-back
     store.close();
   });
 });

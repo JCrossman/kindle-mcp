@@ -31,9 +31,12 @@ export const ANNOTATIONS_NEXT_TOKEN = ".kp-notebook-annotations-next-page-start"
 export const CONTENT_LIMIT_STATE = ".kp-notebook-content-limit-state";
 
 export const SIGNIN_URL_MARKERS = ["/ap/signin", "/ap/mfa", "/ap/cvf"];
-// Amazon asking for the user (email, password, a one-time code): a sign-in can't be renewed silently.
-export const SIGNIN_FORM =
-  "#ap_email, #ap_email_login, #ap_password, input[type='password'], #auth-mfa-otpcode, input[name='otpCode'], #cvf-input-code";
+// Amazon asking for the user (email, password, a one-time code, a puzzle): a sign-in can't be renewed silently.
+export const PASSWORD_PROMPT = "#ap_email, #ap_email_login, #ap_password, input[type='password']";
+export const CODE_PROMPT = "#auth-mfa-otpcode, input[name='otpCode'], #cvf-input-code";
+export const CAPTCHA_PROMPT =
+  "#captchacharacters, #auth-captcha-guess, #auth-captcha-image, input[name='cvf_captcha_input'], form[action*='validateCaptcha']";
+export const SIGNIN_FORM = `${PASSWORD_PROMPT}, ${CODE_PROMPT}, ${CAPTCHA_PROMPT}`;
 
 export function libraryUrl(base: string, token = ""): string {
   return token ? `${base}/notebook?library=list&token=${token}` : `${base}/notebook`;

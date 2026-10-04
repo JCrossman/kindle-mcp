@@ -790,7 +790,8 @@ export function createServer(cfg: Config): McpServer {
         "Call this first when the user asks to set up their Kindle, or whether it's working, and follow its " +
         "`next_step`: it walks setup through sign-in, the Obsidian vault and the first sync. Also returns store " +
         "counts, truncated-highlight count, pending @commands by tag, the last sync run, whether an Amazon session " +
-        "is saved and when, the data folder and version, the Obsidian vault and settings in effect, tags the user " +
+        "is saved and when, how the last renewal of the sign-in without the user went (`last_renewal`: renewed, or " +
+        "what Amazon asked for), the data folder and version, the Obsidian vault and settings in effect, tags the user " +
         "pointed at notes and tags waiting in Unrouted. `vault_mismatch` means this app and the other Claude apps " +
         "write to different vaults: ask the user which one is right.",
       annotations: READ,
@@ -800,6 +801,8 @@ export function createServer(cfg: Config): McpServer {
         const s = store.status();
         const saved = loadSession(cfg.sessionPath);
         const session = saved !== null;
+        const { lastRenewal } = await import("./sync.js");
+        const renewal = lastRenewal(store);
         let linkExisting: string | undefined;
         let tags: Json = {};
         if (cfg.obsidianVault) {
@@ -839,6 +842,7 @@ export function createServer(cfg: Config): McpServer {
           ...s,
           session_saved: session,
           ...(saved ? { session_saved_at: saved.savedAt, ...(saved.signedInAt ? { signed_in_at: saved.signedInAt } : {}) } : {}),
+          ...(renewal ? { last_renewal: renewal } : {}),
           login_in_progress: loginInProgress,
           data_folder: cfg.home,
           version: SERVER_VERSION,
