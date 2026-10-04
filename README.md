@@ -204,12 +204,17 @@ and open it. The app replaces the old version; your settings, highlights and sig
 
 ## If it keeps asking you to sign in
 
-The sync reuses the sign-in you saved, and renews it by itself while Amazon remembers your browser,
-which is what **Keep me signed in** is for. When Amazon wants your password again, the sync says so:
+The sync reuses the sign-in you saved. Amazon lets part of it expire within a day or so, and the sync
+renews it by itself in a hidden browser while Amazon remembers your browser, which is what **Keep me
+signed in** is for. When that doesn't work, the sync says what Amazon asked the hidden browser for:
 
 - Say "Sign me in to Kindle" and tick **Keep me signed in**. Without it, Amazon forgets the browser
   when the sign-in window closes, and every sync needs you.
-- "Is my Kindle connection working?" shows when you last signed in and which version is running.
+- "Is my Kindle connection working?" shows when you last signed in, how the last renewal went and
+  which version is running.
+- If the daily sync asks every day although the sign-in window opens already signed in, update to
+  the latest version, and if it still asks, report what its summary says on the project's
+  [issues page](https://github.com/JCrossman/kindle-mcp/issues).
 - Nothing is lost while you're signed out: Claude still has your highlights, and the next sync
   catches up.
 

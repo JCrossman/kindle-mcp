@@ -21,8 +21,10 @@ everything else (other installs, tools, settings, how the notebook is read, buil
 - `src/notebook/selectors.ts` — every DOM assumption about Amazon's page. Change here first when a sync breaks.
 - `src/notebook/parser.ts` — pure HTML -> models (cheerio); unit-tested. `client.ts` — pagination, sign-in
   detection and the per-call deadline over a `Fetcher`. `fetchers.ts` — cookie fetcher (cron path) and browser
-  fetcher (fallback). `login.ts` — headed Chrome once, saves `session.json`; `refreshSession` renews a stale sign-in
-  headless from the same profile (sync retries once with it). `session.ts` — cookie jar.
+  fetcher (fallback). `login.ts` — headed Chrome once, saves `session.json` with the browser's user agent (the
+  cookie fetcher sends it); `refreshSession` renews a stale sign-in headless from the same profile (sync retries
+  once with it) and says what stopped it (`Renewal`, kept as `last_renewal`). Headless launches go out under the
+  windowed user agent (`launchContext`): Amazon refuses `HeadlessChrome`. `session.ts` — cookie jar.
 - `src/store.ts` — node:sqlite. Cloud highlights keyed by Amazon annotation id; clippings merge by (book, location).
   Ids are sha1 prefixes identical to the original Python store (golden test); never change the hashing.
   `commands_done_at` is the highlight-level truth (1.0 code writes only that); `command_outputs` records finished
@@ -110,6 +112,12 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   whether the reader keeps notes in Obsidian; told the vault in a second run, it saved it with `kindle_set_vault`,
   ran the first sync, filed the @project and wrote the @post. The 1.3.0 plugin installed from the marketplace (17
   tools, connected). Not yet checked live: the reader setup in the Desktop chat tab.
+- 1.3.2 (2026-10-04): live use showed every routine run asking to sign in again, while the sign-in window opened
+  already signed in: the renewal's headless Chrome names itself `HeadlessChrome`, the window doesn't. Headless
+  launches now go out under the windowed name (the `--user-agent` switch keeps Chrome's own client hints; a CDP
+  override drops them). Against a stand-in that refuses `HeadlessChrome`, the renewal passes and the plain-HTTP sync
+  sends the saved user agent; a password form and a puzzle are reported as such. Not yet checked live: that Amazon
+  renews the sign-in for the hidden browser now.
 
 ## Next
 1. `kindle_get_themes(since)` for the weekly brief.

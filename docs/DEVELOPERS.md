@@ -142,7 +142,7 @@ highlights exported before; `--apply` writes them. `kindle-mcp import-clippings`
 | Tool | What it does |
 |---|---|
 | `kindle_sync` | Pull new highlights from Amazon, update the vault, return what is left with an instruction. |
-| `kindle_status` | Counts, the queue by tag, last sync, session, vault and settings (and where each comes from), tags you pointed at notes, tags waiting in Unrouted, and a next step. |
+| `kindle_status` | Counts, the queue by tag, last sync, session, how the last sign-in renewal went (`last_renewal`), vault and settings (and where each comes from), tags you pointed at notes, tags waiting in Unrouted, and a next step. |
 | `kindle_set_vault` | Save which Obsidian vault to use, for every client; only a folder with `.obsidian` in it. |
 | `kindle_login` | Open the one-time Amazon sign-in window. |
 | `kindle_list_books` | Books, most recently highlighted first. |
@@ -216,8 +216,17 @@ clear the extension's vault field to use the saved one everywhere.
 Amazon has no public API for Kindle highlights. The sync calls the same addresses the notebook
 site's own page calls to load your library and each book's highlights, sends your saved sign-in, and
 reads the HTML those addresses answer with. No browser and no screenshots: a browser is used only to
-sign in. If Amazon changes that HTML, `kindle-mcp doctor` shows what changed, and
-`src/notebook/selectors.ts` is the one file to fix.
+sign in, and to renew the sign-in when Amazon refuses the saved one. If Amazon changes that HTML,
+`kindle-mcp doctor` shows what changed, and `src/notebook/selectors.ts` is the one file to fix.
+
+**Sign-in renewal.** Part of Amazon's sign-in expires within about a day. When the saved cookies are
+refused, the sync opens the sign-in browser's profile without a window, loads the notebook, and a
+browser Amazon remembers (**Keep me signed in**) gets new cookies without a password. Chrome without
+a window names itself `HeadlessChrome` in its user agent, and Amazon treats that browser as a
+stranger, so the hidden browser is started under its windowed name (Chrome's `--user-agent` switch,
+which keeps the browser's own client hints). The plain-HTTP sync sends the user agent of the browser
+that saved the sign-in. When a renewal fails, the sync's message says what Amazon asked for (a
+password, a code, a puzzle) or where the page stopped, and `kindle_status` keeps it as `last_renewal`.
 
 Verified against live captures of the notebook and a full account sync (the original Python version,
 2026-09-21) and, for this TypeScript version, the plain-HTTP sync from Claude Desktop (2026-09-22).

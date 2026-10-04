@@ -16,6 +16,8 @@ export interface Session {
   savedAt: string;
   /** When a browser last signed in or renewed the sign-in. Files from before 1.1.1 lack it. */
   signedInAt?: string;
+  /** That browser's user agent, which the plain-HTTP sync then sends too. Files from before 1.3.2 lack it. */
+  userAgent?: string;
   cookies: Cookie[];
 }
 
