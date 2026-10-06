@@ -95,7 +95,7 @@ gh api "repos/$REPO" --jq '{visibility, delete_branch_on_merge, has_wiki, has_pr
 gh api "repos/$REPO/rulesets" --jq '.[] | {name, enforcement}'
 gh api "repos/$REPO/actions/permissions/workflow"
 echo
-echo "Next: add the PRIVATE_TERMS secret (Settings > Secrets and variables > Actions): one title, author or"
-echo "project name per line, never in the repository. CI and the release workflow refuse to run without it."
+echo "Optional: add a PRIVATE_TERMS repository secret (Settings > Secrets and variables > Actions): one title,"
+echo "author or project name per line, never in the repository. CI and the release workflow then refuse those words."
 echo "Release (GitHub only, nothing goes to npm) with:"
 echo "  gh workflow run release.yml --repo $REPO -f version=\$(node -p \"require('./package.json').version\")"

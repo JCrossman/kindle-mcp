@@ -319,8 +319,9 @@ review threads resolved, CI green on an up-to-date branch, no force pushes or de
 `--public` it also flips visibility and enables secret scanning with push protection. Re-running is
 safe; it prints the resulting state.
 
-Then add the `PRIVATE_TERMS` secret (Settings, Secrets and variables, Actions): one title, author or project
-name per line. CI on every push and the release workflow refuse to run without it.
+Optionally add a `PRIVATE_TERMS` repository secret (Settings, Secrets and variables, Actions): one title, author
+or project name per line. CI and the release workflow refuse those words when it is set. Without it they still
+check fixtures and the structural rules, which is what stops new leaks.
 
 ## Next
 

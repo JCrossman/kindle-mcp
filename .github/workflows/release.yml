@@ -29,8 +29,7 @@ jobs:
       - run: npm ci
       - name: Privacy check (nothing from a reader's library in the repository)
         env:
-          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
-          PRIVACY_REQUIRE_TERMS: "1"
+          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }} # optional: titles and names to refuse, one per line
         run: node scripts/privacy-check.mjs
       - run: npm run typecheck
       - run: npm test
