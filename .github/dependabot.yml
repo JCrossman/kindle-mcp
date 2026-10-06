@@ -1,0 +1,15 @@
+# Weekly dependency updates. Actions are pinned to commit SHAs in the workflows; Dependabot keeps
+# both the SHA and the version comment current.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

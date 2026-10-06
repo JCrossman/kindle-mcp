@@ -1,0 +1,73 @@
+# Release kindle-mcp. Nothing is published to npm: the package is private, and readers get the Claude Desktop
+# bundle (.mcpb) and the plugin from the GitHub release. Two ways to start it:
+#   - push a version tag:  git tag v1.0.0 && git push origin v1.0.0
+#   - run it from the Actions tab (workflow_dispatch), typing the version in package.json to confirm; the
+#     workflow then creates the v<version> tag itself.
+# Either way the version released is the one in package.json on the checked-out commit, a version that already
+# has a release is refused, and the bundle is built and self-tested before the tag or the release exists.
+name: release
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release; must equal the version in package.json (e.g. 1.0.0)"
+        required: true
+        type: string
+permissions:
+  contents: write # create the tag on a manual run, and the release
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Privacy check (nothing from a reader's library in the repository)
+        env:
+          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+          PRIVACY_REQUIRE_TERMS: "1"
+        run: node scripts/privacy-check.mjs
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - name: Read the version from package.json
+        id: pkg
+        run: |
+          echo "name=$(node -p "require('./package.json').name")" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Tag must match package.json (tag push)
+        if: github.event_name == 'push'
+        run: test "v${{ steps.pkg.outputs.version }}" = "$GITHUB_REF_NAME"
+      - name: Typed version must match package.json (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: test "${{ inputs.version }}" = "${{ steps.pkg.outputs.version }}"
+      - name: Refuse a version that already has a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.pkg.outputs.version }}" >/dev/null 2>&1; then
+            echo "v${{ steps.pkg.outputs.version }} already has a release"; exit 1
+          fi
+      - name: Build and self-test the Claude Desktop bundle (before anything is tagged or released)
+        run: node scripts/build-mcpb.mjs
+      - name: Create and push the tag (manual run)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.pkg.outputs.version }}" -m "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}"
+          git push origin "v${{ steps.pkg.outputs.version }}"
+      - name: GitHub release with the bundle attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.pkg.outputs.version }}" \
+            "${{ steps.pkg.outputs.name }}-${{ steps.pkg.outputs.version }}.mcpb" \
+            --title "${{ steps.pkg.outputs.name }} ${{ steps.pkg.outputs.version }}" \
+            --notes "Claude Desktop: download the .mcpb below and open it (Settings, Extensions)." \
+            --verify-tag

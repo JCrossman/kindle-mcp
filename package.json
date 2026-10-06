@@ -1,0 +1,61 @@
+{
+  "name": "kindle-mcp-server",
+  "version": "1.3.4",
+  "description": "Kindle highlights and notes as an agent-readable store: sync from read.amazon.com, SQLite + FTS, MCP server, @command router.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JCrossman/kindle-mcp.git"
+  },
+  "homepage": "https://github.com/JCrossman/kindle-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/JCrossman/kindle-mcp/issues"
+  },
+  "keywords": [
+    "kindle",
+    "highlights",
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "obsidian"
+  ],
+  "bin": {
+    "kindle-mcp": "dist/cli.js"
+  },
+  "main": "dist/server.js",
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-prompts.mjs",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "render-plugin": "tsx scripts/render-plugin.ts",
+    "render-skill": "tsx scripts/render-plugin.ts",
+    "mcpb": "node scripts/build-mcpb.mjs",
+    "prepare": "git config core.hooksPath .githooks || true",
+    "privacy": "node scripts/privacy-check.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "cheerio": "^1.2.0",
+    "playwright-core": "^1.63.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.0",
+    "@anthropic-ai/mcpb": "^2.1.2"
+  },
+  "private": true
+}

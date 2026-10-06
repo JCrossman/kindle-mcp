@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.DS_Store
+# Never commit live captures or the store: they contain your highlights and session
+*.har
+*.db
+*.db-wal
+*.db-shm
+doctor-*.html
+# Node
+node_modules/
+dist/
+# Amazon session cookies saved by `kindle-mcp login`
+session.json
+# Desktop bundle output
+*.mcpb
+
+# Never commit a reader's term list or environment files
+private-terms.txt
+.env
+.env.*
+*.sqlite
+*.sqlite3

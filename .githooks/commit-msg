@@ -1,0 +1,3 @@
+#!/bin/sh
+# The commit message is checked too: no reader library data, no Claude session links.
+exec node "$(git rev-parse --show-toplevel)/scripts/privacy-check.mjs" --message "$1"
