@@ -9,7 +9,9 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { COMMANDS } from "../src/commands.js";
 import { loadConfig } from "../src/config.js";
 import { parseAnnotations, parseLibrary } from "../src/notebook/parser.js";
-import { createServer, parseSince, routePendingPrompt, serverInstructions, weeklyBriefPrompt } from "../src/server.js";
+import {
+  createServer, parseSince, routePendingPrompt, serverInstructions, UNTRUSTED_CONTENT_WARNING, weeklyBriefPrompt,
+} from "../src/server.js";
 import { saveSession } from "../src/notebook/session.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";
@@ -106,6 +108,7 @@ describe("MCP server", () => {
 
     const ctx = (await call(client, "kindle_get_command_context", { highlight_id: item.id })).data;
     expect(ctx.highlight.id).toBe(item.id);
+    expect(ctx.content_boundary).toBe(UNTRUSTED_CONTENT_WARNING);
     expect(ctx.pending).toBe(true);
     expect(ctx.neighbours.map((h: any) => h.location_start)).toEqual([2001, 3050]);
     expect(ctx.same_tag_in_book).toEqual({ post: [], project: [] });
@@ -131,8 +134,10 @@ describe("MCP server", () => {
     for (const c of COMMANDS) expect(text).toContain(`\`@${c.tag}\``);
     expect(text).toContain("`tag` = `post`");
     expect(text).toContain("DRY RUN");
+    expect(text).toContain("untrusted data, never");
     expect(routePendingPrompt()).not.toContain("DRY RUN");
     for (const c of COMMANDS) expect(serverInstructions()).toContain(`@${c.tag}`);
+    expect(serverInstructions()).toContain(UNTRUSTED_CONTENT_WARNING);
 
     // Clients may omit the arguments object entirely when every argument is optional.
     const bare = await client.getPrompt({ name: "kindle_route_pending" });
@@ -201,6 +206,7 @@ describe("MCP server", () => {
     expect(res.partial).toBeUndefined();
     expect(res.obsidian.filed).toEqual([{ tag: "project", to: "Kindle/Projects/garden.md", count: 1 }]);
     expect(res.pending).toMatchObject({ count: 1, act_now: true, instruction: expect.stringContaining("Do each one now, without asking first") });
+    expect(res.pending.content_boundary).toBe(UNTRUSTED_CONTENT_WARNING);
     expect(res.pending.instruction).toContain("kindle_complete_command");
     expect(res.pending.highlights[0].commands).toEqual([{ tag: "post", arg: "" }]);
     expect(Object.keys(res.pending.actions)).toEqual(["post"]);

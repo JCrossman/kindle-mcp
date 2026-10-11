@@ -262,4 +262,37 @@ describe("obsidian export", () => {
     expect(readFileSync(file, "utf8")).toContain("MY OWN THOUGHTS");
     store.close();
   });
+  it("makes remote Markdown inert before writing it to a vault", () => {
+    const store = new Store(tmpDb("obsidian-inert"));
+    const bookId = store.upsertBook(
+      makeBook({
+        bookId: "B0FAKE0099",
+        asin: "B0FAKE0099",
+        title: "<script> Placeholder Title",
+        author: "<% Placeholder Author %>",
+      }),
+    );
+    store.upsertHighlight(
+      bookId,
+      makeHighlight({
+        bookId,
+        text: "```dataviewjs\nplaceholder\n```\n> ```dataviewjs\n> placeholder\n> ```\n<script>placeholder</script>",
+        note: "<% placeholder %> `$= placeholder`",
+        locationStart: 1,
+        amazonId: "B0FAKE0099:1:HIGHLIGHT:placeholder",
+      }),
+    );
+    const vault = join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-vault-inert-${process.pid}-${Date.now()}`);
+    require("node:fs").mkdirSync(vault);
+    const out = exportBook(store, bookId, vault);
+    const text = readFileSync(join(vault, out.file), "utf8");
+    expect(text).toContain("# &lt;script> Placeholder Title");
+    expect(text).toContain("*<\\% Placeholder Author %>*");
+    expect(text).toContain("```text");
+    expect(text).toContain("> > ```text");
+    expect(text).toContain("&lt;script>placeholder&lt;/script>");
+    expect(text).toContain("<\\% placeholder %> `\\$= placeholder`");
+    expect(text).not.toContain("```dataviewjs");
+    store.close();
+  });
 });

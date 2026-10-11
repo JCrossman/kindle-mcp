@@ -54,6 +54,7 @@ const RQ = String.fromCharCode(0x201d);
 const sha = (s: string): string => createHash("sha1").update(s, "utf8").digest("hex");
 const normArg = (s: string): string => s.normalize("NFC").replace(/\s+/g, " ").trim().toLowerCase();
 const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
+const inertLine = (s: string): string => oneLine(neutralize(s));
 
 /** `kh-<highlight>-<tag>[-<4 hex of the argument>]`: stable, unique per command, valid in Obsidian. */
 export function blockIdFor(hid: string, c: Command): string {
@@ -64,7 +65,7 @@ export function blockIdFor(hid: string, c: Command): string {
 
 /** `Title, Location 12` or `Title, Page 7`: link display text, without characters a link can't hold. */
 function citation(h: HighlightRow): string {
-  const title = h.title.replace(/[[\]|#^]/g, "").trim();
+  const title = inertLine(h.title.replace(/[[\]|#^]/g, ""));
   const where = h.location_start !== null ? `Location ${h.location_start}` : h.page ? `Page ${h.page}` : "";
   return where ? `${title}, ${where}` : title;
 }
@@ -76,7 +77,7 @@ export function sourceLink(ctx: FileContext, h: HighlightRow, bookPath: string):
 }
 
 function excerpt(h: HighlightRow, max = 140): string {
-  const t = oneLine(h.text);
+  const t = inertLine(h.text);
   if (!t) return "";
   const cut = Array.from(t).length > max ? `${Array.from(t).slice(0, max - 1).join("").trimEnd()}...` : t;
   return `${LQ}${cut}${RQ}`;
@@ -90,9 +91,10 @@ function bookPathFor(ctx: FileContext, h: HighlightRow): string {
 }
 
 function quoteBlock(h: HighlightRow, link: string, withNote: boolean): string {
-  const lines = oneLine(h.text) ? h.text.split(/\r\n|\r|\n/).map((l) => `> ${l}`) : [];
-  if (withNote && h.note) lines.push(...(lines.length ? [">"] : []), `> **Note:** ${oneLine(h.note)}`);
-  lines.push(`> ${String.fromCharCode(0x2014)} ${h.author ? `${h.author}, ` : ""}${link}`);
+  const text = neutralize(h.text);
+  const lines = oneLine(text) ? text.split(/\r\n|\r|\n/).map((l) => `> ${l}`) : [];
+  if (withNote && h.note) lines.push(...(lines.length ? [">"] : []), `> **Note:** ${inertLine(h.note)}`);
+  lines.push(`> ${String.fromCharCode(0x2014)} ${h.author ? `${inertLine(h.author)}, ` : ""}${link}`);
   return lines.join("\n");
 }
 
@@ -302,8 +304,8 @@ export function suggestFor(ctx: FileContext, rawTag: string): Suggestion {
 
 /** The Unrouted line for one command, exactly as the sync writes it. */
 function unroutedLine(h: HighlightRow, c: Command, reason: string, quote: string, link: string, id: string): string {
-  const what = `\`@${c.tag}${c.arg ? ` ${oneLine(c.arg)}` : ""}\``;
-  const note = h.note ? ` — note: ${LQ}${oneLine(h.note)}${RQ}` : "";
+  const what = `\`@${c.tag}${c.arg ? ` ${inertLine(c.arg)}` : ""}\``;
+  const note = h.note ? ` — note: ${LQ}${inertLine(h.note)}${RQ}` : "";
   return `- ${what} ${reason}${note} — ${quote ? `${quote} — ` : ""}${link} ^${id}`;
 }
 
@@ -365,7 +367,7 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
     path = ctx.vault.k("Inbox/Todo.md");
     const text = ctx.vault.read(path);
     if (!text || !hasBlockId(text, id)) {
-      appendList(ctx, path, "Kindle to-dos", `- [ ] ${oneLine(c.arg)} — ${quote ? `${quote} — ` : ""}${link} ^${id}`);
+      appendList(ctx, path, "Kindle to-dos", `- [ ] ${inertLine(c.arg)} — ${quote ? `${quote} — ` : ""}${link} ^${id}`);
     }
   } else if (c.tag === "quote") {
     path = ctx.vault.k("Inbox/Quotes.md");
@@ -620,7 +622,7 @@ export function writeAgentNote(
     .filter((p) => p !== path)
     .slice(0, 8);
   const title = path.split("/").pop()!.replace(/\.md$/, "");
-  const lead = h.note ? `**${LEAD[c.tag]}:** ${oneLine(h.note)}\n\n` : "";
+  const lead = h.note ? `**${LEAD[c.tag]}:** ${inertLine(h.note)}\n\n` : "";
   const text = [
     "---",
     "source: kindle",

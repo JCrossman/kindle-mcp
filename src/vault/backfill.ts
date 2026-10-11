@@ -7,7 +7,7 @@
 import { bookNotePath, metaOf, noteLine, TRUNCATED_TEXT, TRUNCATED_TEXT_V1 } from "../obsidian.js";
 import type { HighlightRow } from "../store.js";
 import type { FileContext } from "./file.js";
-import { eolOf, VaultConflict } from "./write.js";
+import { eolOf, neutralize, VaultConflict } from "./write.js";
 
 export interface BackfillPlan {
   blocks: number;
@@ -90,6 +90,8 @@ function relink(ctx: FileContext, h: HighlightRow, block: Block, self: string): 
     content[exp.note] = `**Note:** ${r.text}`;
     links += r.added;
   }
+  for (let i = 0; i < exp.quote; i++) content[i] = neutralize(content[i]);
+  if (exp.note !== null) content[exp.note] = `**Note:** ${neutralize(content[exp.note].slice("**Note:** ".length))}`;
   const out = content.filter((l, i) => !(block.inline && exp.meta === i && l === ""));
   const lines = out.map((l) => (l ? `> ${l}` : ">"));
   return { lines: [...lines, "", `^kh-${h.id}`], links };
