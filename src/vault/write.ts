@@ -184,7 +184,10 @@ export function sanitizeName(raw: string, max = 100): string | null {
  */
 export function neutralize(md: string): string {
   return md
-    .replace(/^([ \t]*)(`{3,}|~{3,})[ \t]*(dataviewjs|dataview|js-engine|javascript-engine|templater)\b[^\n]*$/gim, "$1$2text")
+    .replace(
+      /^([ \t]*(?:(?:>[ \t]*)|(?:(?:[-+*]|\d+[.)])[ \t]+))*)(`{3,}|~{3,})[ \t]*(dataviewjs|dataview|js-engine|javascript-engine|templater)\b[^\n]*$/gim,
+      "$1$2text",
+    )
     .replace(/`\$=/g, "`\\$=")
     .replace(/<%/g, "<\\%")
     .replace(/<(\/?)(script|iframe|object|embed)\b/gi, "&lt;$1$2");
