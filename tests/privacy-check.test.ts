@@ -67,6 +67,24 @@ describe("private terms", () => {
     expect(hit("tag shelf2 here")).toHaveLength(1); // a reader's own tag
     expect(hit("@post and @project and @todo")).toEqual([]); // the built-in commands are public
   });
+  it("skip one-word notes and tags made of everyday words, keeping the distinctive ones", async () => {
+    const home = tmp();
+    const db = new DatabaseSync(join(home, "kindle.db"));
+    db.exec("CREATE TABLE books (title TEXT, author TEXT); CREATE TABLE highlights (text TEXT, note TEXT, raw_note TEXT)");
+    const add = db.prepare("INSERT INTO highlights VALUES (?, ?, ?)");
+    add.run("", "save", "Research");
+    add.run("", "@idea @wombatgarden", "");
+    add.run("", "@project save", "");
+    add.run("", "plumbago", "");
+    add.run("", "save this idea", "");
+    db.close();
+    const loaded = await loadTerms({ KINDLE_MCP_HOME: home }, home);
+    const hit = (text: string) => loaded.scan(text).map((h: { id: string }) => h.id);
+    expect(hit("const save = research(idea)")).toEqual([]);
+    expect(hit("a wombatgarden")).toHaveLength(1);
+    expect(hit("the plumbago bed")).toHaveLength(1);
+    expect(hit("please save this idea")).toHaveLength(1); // more than one word stays a term
+  });
   it("never make loading fail", async () => {
     const home = tmp();
     writeFileSync(join(home, "kindle.db"), "not a database");
