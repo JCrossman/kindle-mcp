@@ -47,7 +47,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
     "cheerio": "^1.2.0",
-    "playwright-core": "^1.63.0",
+    "playwright-core": "^1.64.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
@@ -55,7 +55,7 @@
     "@types/node": "^22.10.0",
     "tsx": "^4.23.0",
     "typescript": "^5.7.0",
-    "vitest": "^5.0.0"
+    "vitest": "^5.0.3"
   },
   "private": true
 }
