@@ -458,6 +458,17 @@ export class Store {
       .slice(0, limit);
   }
 
+  /** Highlights first seen before a point in time that contain any of the words, best first. */
+  olderMatching(words: string[], beforeIso: string, limit = 3): HighlightRow[] {
+    const distinct = [...new Set(words.flatMap((w) => w.match(/[\p{L}\p{N}_]+/gu) ?? []))].slice(0, 8);
+    if (!distinct.length) return [];
+    return this.rows(
+      `${Store.SELECT} JOIN highlights_fts f ON f.id = h.id
+       WHERE highlights_fts MATCH ? AND h.first_seen < ? ORDER BY bm25(highlights_fts) LIMIT ?`,
+      distinct.map((w) => `"${w}"*`).join(" OR "), beforeIso, limit,
+    );
+  }
+
   newSince(sinceIso: string, limit = 200): HighlightRow[] {
     return this.rows(`${Store.SELECT} WHERE h.first_seen >= ? ORDER BY h.first_seen DESC, b.title LIMIT ?`, sinceIso, limit);
   }

@@ -24,7 +24,7 @@ export const TOOLS = [
   "kindle_list_books", "kindle_get_highlights", "kindle_search_highlights", "kindle_get_new_since",
   "kindle_get_pending_commands", "kindle_get_command_context", "kindle_complete_command", "kindle_mark_command_done",
   "kindle_search_vault", "kindle_link_existing_highlights", "kindle_export_to_obsidian", "kindle_sync",
-  "kindle_status", "kindle_set_vault", "kindle_login", "kindle_read_note", "kindle_teach_tag",
+  "kindle_status", "kindle_set_vault", "kindle_login", "kindle_read_note", "kindle_teach_tag", "kindle_get_themes",
 ];
 
 let amazon: FakeAmazon;
@@ -77,6 +77,12 @@ describe("MCP server", () => {
 
     expect((await call(client, "kindle_search_highlights", { query: "territory" })).data.count).toBe(1);
     expect((await call(client, "kindle_get_new_since", { since: "1d" })).data.count).toBe(3);
+    const themes = await call(client, "kindle_get_themes", { since: "1d" });
+    expect(themes.data.count).toBe(3);
+    expect(themes.data.content_boundary).toBe(UNTRUSTED_CONTENT_WARNING);
+    expect(Array.isArray(themes.data.themes) && Array.isArray(themes.data.unthemed_ids)).toBe(true);
+    expect(themes.data.themes.flatMap((t: any) => t.highlight_ids).length + themes.data.unthemed_ids.length).toBe(3);
+    expect((await call(client, "kindle_get_themes", { since: "whenever" })).isError).toBe(true);
     const bad = await call(client, "kindle_get_new_since", { since: "whenever" });
     expect(bad.isError).toBe(true);
     expect(bad.data.error).toMatch(/Could not read/);

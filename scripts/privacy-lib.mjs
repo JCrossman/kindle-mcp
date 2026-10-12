@@ -8,11 +8,13 @@
 //     session links.
 //   - Private terms, when a source is available: PRIVATE_TERMS (a CI secret), ~/.kindle-mcp/private-terms.txt,
 //     and the titles, authors, highlights and notes in the reader's own kindle.db. A finding names the file, the
-//     line and which term, never the term itself.
+//     line and which term, never the term itself. A note, tag or project name that is one everyday word
+//     ("save", "idea", a command name) is not a term: it says nothing about the reader and matched ordinary code.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export const QUOTE_WORDS = 6; // this many consecutive words in common with a highlight is a quote
 const MIN_TERM = 4; // normalised characters; shorter terms would match everywhere
@@ -123,6 +125,23 @@ function authorParts(author) {
   return out;
 }
 
+// One-word notes and tags readers type that name no book, person or project of theirs. Together with the
+// fixture vocabulary and the command tags, a single word from a note on this list is never a private term.
+const EVERYDAY_WORDS = new Set(
+  (
+    "action agree answer book bookmark chapter check concept cool data definition disagree example fact false " +
+    "favorite fav follow framework goal good great habit habits highlight how idea ideas important inbox insight " +
+    "insights interesting key later learn lesson lessons like list look love maybe method model nice note notes " +
+    "plan principle process question quote read reference remember reread review revisit save share star stat " +
+    "story strategy summary task theory think thought thoughts tip tips todo true useful what why wow yes"
+  ).split(/\s+/),
+);
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const everyday = (text) => {
+  const w = normalize(text);
+  return !!w && !w.includes(" ") && (EVERYDAY_WORDS.has(w) || PUBLIC_TAGS.has(w) || loadVocabulary(ROOT).has(w));
+};
+
 function addFromLibrary(terms, id, rows) {
   const { books, highlights } = rows;
   books.forEach((b, i) => {
@@ -136,9 +155,9 @@ function addFromLibrary(terms, id, rows) {
     for (const field of [h.note, h.raw_note]) {
       const note = String(field ?? "");
       if (!note) continue;
-      terms.add(`${id} note ${i + 1}`, note);
-      for (const m of note.matchAll(/@project\s+(\S+)/gi)) terms.add(`${id} project name in note ${i + 1}`, m[1]);
-      for (const m of note.matchAll(/@([\p{L}\p{N}_-]+)/gu)) if (!PUBLIC_TAGS.has(m[1].toLowerCase())) terms.add(`${id} tag in note ${i + 1}`, m[1]);
+      if (!everyday(note)) terms.add(`${id} note ${i + 1}`, note);
+      for (const m of note.matchAll(/@project\s+(\S+)/gi)) if (!everyday(m[1])) terms.add(`${id} project name in note ${i + 1}`, m[1]);
+      for (const m of note.matchAll(/@([\p{L}\p{N}_-]+)/gu)) if (!everyday(m[1])) terms.add(`${id} tag in note ${i + 1}`, m[1]);
     }
   });
 }
