@@ -25,6 +25,7 @@ import { actionsTable, COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, type C
 import { ensureDirs, expand, seedSharedVault, vaultMismatch, vaultProblem, writeSettingsFile, type Config } from "./config.js";
 import { loadSession } from "./notebook/session.js";
 import { Store, type HighlightRow } from "./store.js";
+import { findThemes } from "./themes.js";
 import { normalizeFolder } from "./vault/write.js";
 
 export const CHAR_LIMIT = 25_000;
@@ -359,6 +360,46 @@ export function createServer(cfg: Config): McpServer {
         }
         const items = store.newSince(cutoff, limit);
         return reply({ since: cutoff, count: items.length, highlights: items.map((h) => slim(h)) });
+      }),
+  );
+
+  server.registerTool(
+    "kindle_get_themes",
+    {
+      title: "Themes in recent highlights",
+      description:
+        "Highlights first seen since a point in time, grouped into up to max_themes themes by the words and tags " +
+        "they share, each with its highlight ids, its books and a few older highlights on the same words. The basis " +
+        "for the weekly brief: name each theme from its highlights, not from the shared words alone. " +
+        `${TRUNCATED_HINT} ${UNTRUSTED_CONTENT_WARNING}`,
+      inputSchema: {
+        since: z.string().default("7d").describe("Span like '7d', '36h', '2w', or an ISO date like '2026-09-01'"),
+        max_themes: z.number().int().min(1).max(8).default(5),
+        limit: z.number().int().min(1).max(500).default(200).describe("Recent highlights to group"),
+      },
+      annotations: READ,
+    },
+    async ({ since, max_themes, limit }) =>
+      withStore((store) => {
+        let cutoff: string;
+        try {
+          cutoff = parseSince(since);
+        } catch (e) {
+          return fail((e as Error).message);
+        }
+        const items = store.newSince(cutoff, limit);
+        const { themes, unthemed } = findThemes(items, max_themes);
+        return reply({
+          since: cutoff,
+          count: items.length,
+          content_boundary: UNTRUSTED_CONTENT_WARNING,
+          themes: themes.map((t) => ({
+            ...t,
+            older: (t.terms.length ? store.olderMatching(t.terms, cutoff, 3) : []).map((h) => slim(h)),
+          })),
+          unthemed_ids: unthemed,
+          highlights: items.map((h) => slim(h)),
+        });
       }),
   );
 
