@@ -150,6 +150,7 @@ highlights exported before; `--apply` writes them. `kindle-mcp import-clippings`
 | `kindle_get_highlights` | One book's highlights in reading order. |
 | `kindle_search_highlights` | Full-text search over highlights and notes. |
 | `kindle_get_new_since` | Highlights first seen since a date or span (`7d`). |
+| `kindle_get_themes` | Recent highlights grouped into themes by shared words and tags, each with older highlights on the same words. |
 | `kindle_get_pending_commands` | Highlights with @commands still to do, each with its action. |
 | `kindle_get_command_context` | One highlight with neighbours, related highlights, related vault notes and its own link. |
 | `kindle_complete_command` | Save one command's result into the vault and mark it done. |
@@ -319,8 +320,9 @@ review threads resolved, CI green on an up-to-date branch, no force pushes or de
 `--public` it also flips visibility and enables secret scanning with push protection. Re-running is
 safe; it prints the resulting state.
 
-Then add the `PRIVATE_TERMS` secret (Settings, Secrets and variables, Actions): one title, author or project
-name per line. CI on every push and the release workflow refuse to run without it.
+Optionally add a `PRIVATE_TERMS` repository secret (Settings, Secrets and variables, Actions): one title, author
+or project name per line. CI and the release workflow refuse those words when it is set. Without it they still
+check fixtures and the structural rules, which is what stops new leaks.
 
 ## Next
 

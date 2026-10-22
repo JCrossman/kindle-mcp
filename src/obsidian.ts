@@ -11,7 +11,7 @@ import type { HighlightRow, Store } from "./store.js";
 import { yamlString } from "./vault/frontmatter.js";
 import type { VaultIndex } from "./vault/index.js";
 import type { Linker } from "./vault/linkify.js";
-import { Vault } from "./vault/write.js";
+import { neutralize, Vault } from "./vault/write.js";
 
 export interface ExportResult {
   /** Vault-relative path of the book note. */
@@ -91,6 +91,8 @@ export function renderBlock(h: HighlightRow, linker?: Linker | null, self?: stri
       links += r.added;
     }
   }
+  body = neutralize(body);
+  note = neutralize(note);
   const lines = body ? body.split(/\r\n|\r|\n/).map((ln) => `> ${ln}`) : [];
   if (note) lines.push(...(lines.length ? [">"] : []), `> **Note:** ${note}`);
   const meta = metaOf(h);
@@ -117,17 +119,19 @@ export function existingBlockIds(text: string): Set<string> {
 function header(book: Record<string, unknown>): string {
   const title = book.title as string;
   const author = (book.author as string) || "";
+  const heading = neutralize(title).replace(/\s*\n\s*/g, " ");
+  const byline = neutralize(author).replace(/\s*\n\s*/g, " ");
   return [
     "---",
     `title: ${yamlString(title)}`,
     `author: ${yamlString(author)}`,
-    `asin: ${(book.asin as string | null) ?? ""}`,
+    `asin: ${yamlString((book.asin as string | null) ?? "")}`,
     "source: kindle",
     "tags: [kindle]",
     "---",
     "",
-    `# ${title}`,
-    ...(author ? [`*${author}*`] : []),
+    `# ${heading}`,
+    ...(byline ? [`*${byline}*`] : []),
     "",
     "## Highlights",
   ].join("\n");

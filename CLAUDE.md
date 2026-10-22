@@ -24,7 +24,7 @@ plumbing or for developers. Keep reader-facing text free of it.
 
 Under the hood: Kindle highlights and notes as an agent-readable store, and an Obsidian vault that keeps itself linked. Sync engine
 (fetch + saved cookies, Playwright only to sign in and to renew a stale sign-in) -> SQLite + FTS -> MCP server over
-stdio (17 tools, 2 prompts), shipped as a Claude Desktop extension (.mcpb) on the GitHub release (not on npm: the
+stdio (18 tools, 2 prompts), shipped as a Claude Desktop extension (.mcpb) on the GitHub release (not on npm: the
 package is private), and as a plugin for Claude Code and Cowork (the same .mcpb plus four skills). With a vault, each sync appends new highlights to book notes linked to
 the user's notes, files @todo/@quote/@project and any other tag named after a note itself, and hands @post/@research
 to the agent, which saves them with `kindle_complete_command`. README.md is for readers; docs/DEVELOPERS.md has
@@ -149,5 +149,4 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   Amazon's box is still `input[name='rememberMe']`.
 
 ## Next
-1. `kindle_get_themes(since)` for the weekly brief.
-2. Streamable HTTP transport behind a token, for web and mobile clients.
+1. Streamable HTTP transport behind a token, for web and mobile clients.

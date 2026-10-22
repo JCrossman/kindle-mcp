@@ -143,6 +143,8 @@ describe("vault writes", () => {
     expect(sanitizeName("trailing dots...")).toBe("trailing dots");
     expect(sanitizeName("???")).toBeNull();
     expect(neutralize("```dataviewjs\ndv.x()\n```\n`$= dv.y` <% tp.z %> <script>")).toBe("```text\ndv.x()\n```\n`\\$= dv.y` <\\% tp.z %> &lt;script>");
+    expect(neutralize("> ```dataviewjs\n> dv.x()\n> ```")).toBe("> ```text\n> dv.x()\n> ```");
+    expect(neutralize("> - ```templater\n>   x\n>   ```")).toBe("> - ```text\n>   x\n>   ```");
     expect(hasBlockId("text\n\n^kh-abc\n", "kh-abc")).toBe(true);
     expect(hasBlockId("- a ^kh-abc-todo-1234", "kh-abc")).toBe(false);
     expect(hasBlockId("see [[Book#^kh-abc|Book]]", "kh-abc")).toBe(false);

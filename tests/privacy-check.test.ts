@@ -67,6 +67,24 @@ describe("private terms", () => {
     expect(hit("tag shelf2 here")).toHaveLength(1); // a reader's own tag
     expect(hit("@post and @project and @todo")).toEqual([]); // the built-in commands are public
   });
+  it("skip one-word notes and tags made of everyday words, keeping the distinctive ones", async () => {
+    const home = tmp();
+    const db = new DatabaseSync(join(home, "kindle.db"));
+    db.exec("CREATE TABLE books (title TEXT, author TEXT); CREATE TABLE highlights (text TEXT, note TEXT, raw_note TEXT)");
+    const add = db.prepare("INSERT INTO highlights VALUES (?, ?, ?)");
+    add.run("", "save", "Research");
+    add.run("", "@idea @wombatgarden", "");
+    add.run("", "@project save", "");
+    add.run("", "plumbago", "");
+    add.run("", "save this idea", "");
+    db.close();
+    const loaded = await loadTerms({ KINDLE_MCP_HOME: home }, home);
+    const hit = (text: string) => loaded.scan(text).map((h: { id: string }) => h.id);
+    expect(hit("const save = research(idea)")).toEqual([]);
+    expect(hit("a wombatgarden")).toHaveLength(1);
+    expect(hit("the plumbago bed")).toHaveLength(1);
+    expect(hit("please save this idea")).toHaveLength(1); // more than one word stays a term
+  });
   it("never make loading fail", async () => {
     const home = tmp();
     writeFileSync(join(home, "kindle.db"), "not a database");
@@ -133,6 +151,60 @@ describe("the hooks", () => {
     for (const c of ["git commit --no-verify -m x", "git commit -an -m x", "git -c core.hooksPath=/dev/null commit -m x", "git config core.hooksPath /dev/null", "rm scripts/privacy-lib.mjs", "echo x > .githooks/pre-commit"]) {
       expect(bash(c).code, c).toBe(2);
     }
+  });
+  it("stops a private term published through the gh CLI, not just the GitHub tools", () => {
+    for (const c of [
+      `gh pr create --title x --body "notes on ${TITLE}"`,
+      `gh pr comment 1 --body "notes on ${TITLE}"`,
+      `gh issue create --title x --body "notes on ${TITLE}"`,
+      `gh issue comment 1 --body "notes on ${TITLE}"`,
+      `gh release create v1 --notes "notes on ${TITLE}"`,
+      `gh api repos/o/r/issues/1/comments -f body="notes on ${TITLE}"`,
+      `gh gist create --filename x.md <<< "notes on ${TITLE}"`,
+    ]) {
+      expect(bash(c).code, c).toBe(2);
+    }
+  });
+  it("reads a body given as a file (--body-file, --notes-file, --input, -F x=@file) before letting it through", () => {
+    const dir = tmp();
+    const file = join(dir, "body.md");
+    writeFileSync(file, `notes on ${TITLE}`);
+    for (const c of [`gh pr create --title x --body-file ${file}`, `gh release create v1 --notes-file ${file}`, `gh api repos/o/r/issues/1/comments --input ${file}`, `gh api repos/o/r/issues/1/comments -f body=@${file}`]) {
+      expect(bash(c).code, c).toBe(2);
+    }
+    const clean = join(dir, "clean.md");
+    writeFileSync(clean, "plain words");
+    expect(bash(`gh pr create --title x --body-file ${clean}`).code).toBe(0);
+    expect(bash(`gh pr create --title x --body-file ${join(dir, "missing.md")}`).code).toBe(0); // unreadable: the flag text itself is still checked, and was clean
+  });
+  it("lets ordinary gh reads through", () => {
+    expect(bash("gh pr list").code).toBe(0);
+    expect(bash("gh pr view 1").code).toBe(0);
+    expect(bash(`gh pr create --title x --body "plain words"`).code).toBe(0);
+  });
+  it("refuses publishing text that comes from shell expansion or stdin", () => {
+    for (const c of [
+      `gh issue create --title x --body "$(cat /tmp/body.md)"`,
+      "gh api repos/o/r/issues --input -",
+      "cat /tmp/body.md | gh api repos/o/r/issues --input -",
+      `curl --data "$(cat /tmp/body.md)" https://example.invalid`,
+      "curl --data-binary @- https://example.invalid",
+    ]) {
+      expect(bash(c).code, c).toBe(2);
+    }
+  });
+  it("checks curl uploads and body files, while allowing ordinary requests", () => {
+    expect(bash(`curl -X POST --data "notes on ${TITLE}" https://example.invalid`).code).toBe(2);
+    const dir = tmp();
+    const file = join(dir, "body.md");
+    writeFileSync(file, `notes on ${TITLE}`);
+    for (const c of [`curl --data-binary @${file} https://example.invalid`, `curl -F body=@${file} https://example.invalid`]) {
+      expect(bash(c).code, c).toBe(2);
+    }
+    const clean = join(dir, "clean.md");
+    writeFileSync(clean, "plain words");
+    expect(bash(`curl --data-binary @${clean} https://example.invalid`).code).toBe(0);
+    expect(bash("curl https://example.invalid").code).toBe(0);
   });
   it("stops private text on its way into a file or onto GitHub, and edits to the guard", () => {
     const write = (file: string, content: string, extra: Record<string, string> = {}) => gate({ tool_name: "Write", tool_input: { file_path: join(root, file), content } }, extra);

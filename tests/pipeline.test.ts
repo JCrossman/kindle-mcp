@@ -96,6 +96,27 @@ describe("vault step", () => {
     expect(files.map((f) => w.read(f))).toEqual(before);
   });
 
+  it("neutralizes remote content in command files", () => {
+    const w = world();
+    w.store.upsertHighlight(
+      "B0FAKE0004",
+      makeHighlight({
+        bookId: "B0FAKE0004",
+        text: "<script>placeholder</script>",
+        note: "@todo <% placeholder %> `$= placeholder`",
+        locationStart: 3000,
+        amazonId: "B0FAKE0004:450000:HIGHLIGHT:inert",
+      }),
+    );
+    runVaultStep(w.cfg, w.store);
+    const todo = w.read("Kindle/Inbox/Todo.md");
+    expect(todo).toContain("<\\% placeholder %> `\\$= placeholder`");
+    expect(todo).not.toContain("<% placeholder %>");
+    const book = w.read(BOOK);
+    expect(book).toContain("&lt;script>placeholder&lt;/script>");
+    expect(book).not.toContain("<script>");
+  });
+
   it("counts entries a 1.0 router already wrote as done", () => {
     const w = world();
     mkdirSync(join(w.vault, "Kindle", "Inbox"), { recursive: true });
