@@ -17,8 +17,9 @@ updated; use the release's Claude Desktop bundle or the plugin instead.
   permissions). Your password is never seen or stored. Treat that file, the browser profile next
   to it, and `kindle.db` (your highlights) as private data.
 - The MCP server runs over stdio on the machine that holds the store and exposes no network port.
-- Sync makes plain GET requests to `read.amazon.com` with those cookies and nothing else; there
-  is no telemetry.
+- Sync talks only to Amazon: plain GET requests to `read.amazon.com` with those cookies, and, when
+  the saved sign-in needs renewing, Amazon's sign-in page loaded in a hidden browser from the saved
+  browser profile. There is no telemetry.
 
 Fixtures under `tests/fixtures` hold placeholder text only: the page markup Amazon uses, with invented titles,
 authors, highlights and notes, fake ASINs and no account ids or tokens. A check (`scripts/privacy-check.mjs`)
