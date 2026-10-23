@@ -61,6 +61,8 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   `linkify.ts` (mention linking), `frontmatter.ts`, `file.ts` (filing, other tags, taught tags, agent notes, reading a
   note), `backfill.ts` (links in
   blocks exported before, only on the user's yes), `run.ts` (the vault step: lease, no writes on a partial index).
+- `src/themes.ts` — `kindle_get_themes`: recent highlights grouped by shared content words and tags (a plural and its
+  singular count as one), each theme with older highlights on the same words. Deterministic; the weekly brief leans on it.
 - `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Prompts in `src/prompts/*.md`.
   Claude Desktop ignores server instructions: what the model must know goes in tool descriptions and results.
 - `src/cli.ts` — login/sync/import-clippings/export/link-existing/status/doctor/prompt/serve. `sync --on-pending CMD`
@@ -99,6 +101,17 @@ everything else (other installs, tools, settings, how the notebook is read, buil
 - Vault writes go through `src/vault/write.ts`, under the vault lease. Append; never rewrite the user's text.
 - MCP tool calls must finish well under 60 s (Claude Desktop cancels them); long work takes a deadline.
 - stdio servers must not write to stdout except through the transport; log to stderr.
+
+## Working on GitHub from a Claude session
+- `main` requires a pull request, resolved threads and green CI on an up-to-date branch. Merge one PR at a time and
+  bring the next one up to date (`update-branch`) after each merge.
+- `@dependabot` commands posted from a session don't reach Dependabot (the comment text is altered on the way). When a
+  Dependabot PR is stuck or conflicted, rebuild the same bump on a fresh branch from `main`, open a PR that says which
+  one it replaces, and close the original.
+- The privacy hook refuses `gh api` calls built with shell variables or stdin: it can't check text it can't see.
+  Write each call out in full.
+- Repository settings, secrets and Actions settings can't be changed from a session (the GitHub proxy refuses them);
+  the reader applies them with `scripts/repo-settings.sh` or in the web UI. Nothing is published to npm.
 
 ## Verified
 - Python version, live account (2026-09-21): library page, annotation pane, pagination, notes, undisplayable
@@ -147,6 +160,14 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   remembers only browsers whose form arrives ticked, the renewal passes only with the tick; headed under Xvfb the
   window stayed 3.1-3.5 s, with the password form and with a remembered browser. Not yet checked live: that
   Amazon's box is still `input[name='rememberMe']`.
+- 1.3.4 (2026-10-06): the repository was recreated with one fresh commit after real library text was found in old
+  fixtures, and the privacy guard added. The check flagged the old text in the former history and found nothing in the
+  new tree, the built bundle or `dist/`; the Claude Code hook blocked writes, commits and GitHub posts with a private term,
+  edits to the guard and `--no-verify`; the git hooks blocked a commit and a commit message in a temp repo. CI and the
+  release workflow run the check. Releases are GitHub-only from here; the package is private.
+- 1.3.5 (2026-10-12, #8 and #9): `kindle_get_themes`, MCP SDK 1.32, the vault-text and untrusted-content hardening.
+  Recorded afterwards: tests and the bundle self-test (18 tools, 2 prompts) pass on `main`, and on 2026-10-23 every
+  commit, PR, comment, review and both release bundles scanned clean.
 
 ## Next
 1. Streamable HTTP transport behind a token, for web and mobile clients.

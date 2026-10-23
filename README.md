@@ -8,7 +8,7 @@ Read on your Kindle, and let Claude do the rest.
   true?`, `@post`, `@todo email Sam` or `@roadmap`. Claude researches the question, drafts the
   post, files the task, or adds the highlight to your Roadmap note, then saves the result in
   Obsidian, linked back to the highlight.
-- **It runs in the background.** A daily sync does all of this while you read. It only asks you
+- **It runs in the background.** A scheduled sync (daily or hourly) does all of this while you read. It only asks you
   something when it can't tell what you meant.
 - **Your reading stays yours.** Your highlights are kept on your computer. Nothing is sent anywhere
   except requests to Amazon for your own notebook, and what you share with Claude in a conversation.

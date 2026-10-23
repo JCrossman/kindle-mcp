@@ -238,7 +238,7 @@ flashed looked like a failure.
 
 Verified against live captures of the notebook and a full account sync (the original Python version,
 2026-09-21) and, for this TypeScript version, the plain-HTTP sync from Claude Desktop (2026-09-22).
-Tests run against scrubbed copies of real page markup in `tests/fixtures`.
+Tests run against Amazon's page markup with invented placeholder text in `tests/fixtures`.
 
 - Location comes from a hidden input; headers may show `Page:` only. Location == byte position // 150 + 1.
 - Row ids are base64 of `<account>:<asin>:<position>:<TYPE>:<uuid>`; stored without the account as `amazon_id`.
@@ -326,5 +326,4 @@ check fixtures and the structural rules, which is what stops new leaks.
 
 ## Next
 
-- `kindle_get_themes(since)`: deterministic keyword clustering the weekly brief can lean on.
 - Streamable HTTP transport with a token, for Claude on the web and mobile.
