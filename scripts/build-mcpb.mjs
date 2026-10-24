@@ -166,7 +166,7 @@ const entry = join(verify, packedManifest.server.entry_point);
 const env = { ...process.env, KINDLE_MCP_HOME: join(root, "build", "mcpb-verify-home"), OBSIDIAN_VAULT: "${user_config.obsidian_vault}" };
 for (const [label, extra] of [["as the manifest says", []], ["host repeats the script path", [entry, "serve"]]]) {
   const r = await handshake(process.execPath, [entry, ...extra], env);
-  const ok = r.discover && r.server?.version === pkg.version && r.tools === tools.length && r.prompts === prompts.length;
+  const ok = r.discover && r.server?.version === pkg.version && r.tools === tools.length && r.prompts === prompts.length && !r.stray.length;
   console.log(`self-test, ${label}: ${ok ? "ok" : "FAILED"} (${r.tools} tools, ${r.prompts} prompts, discover ${r.discover})`);
   if (!ok) throw new Error(`bundle self-test failed (${label}): ${JSON.stringify(r)}`);
 }

@@ -2,11 +2,15 @@
 // bundle, and tests/mcpb-entry.test.ts against the source entry.
 import { spawn } from "node:child_process";
 
-/** Speak MCP over stdio to a spawned server the way Claude Desktop does: discover probe first, then initialize. */
+/**
+ * Speak MCP over stdio to a spawned server the way Claude Desktop does: discover probe first, then initialize.
+ * `stray` holds any stdout line that isn't JSON-RPC: one is enough to break a real host, so callers fail on it.
+ */
 export function handshake(command, args, env) {
   return new Promise((resolve) => {
     const p = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env });
     const got = {};
+    const stray = [];
     let out = "", err = "", exit = null;
     const finish = () => {
       try { p.kill(); } catch {}
@@ -16,6 +20,7 @@ export function handshake(command, args, env) {
         tools: got[3]?.result?.tools?.length ?? 0,
         prompts: got[4]?.result?.prompts?.length ?? 0,
         exit,
+        stray,
         stderr: err.split("\n").filter((l) => l.trim() && !/ExperimentalWarning|trace-warnings/.test(l)).slice(0, 3),
       });
     };
@@ -25,7 +30,7 @@ export function handshake(command, args, env) {
       const lines = out.split("\n");
       out = lines.pop();
       for (const line of lines) {
-        try { const m = JSON.parse(line); if (m.id !== undefined) got[m.id] = m; } catch { err += `non-JSON on stdout: ${line.slice(0, 80)}\n`; }
+        try { const m = JSON.parse(line); if (m.id !== undefined) got[m.id] = m; } catch { stray.push(line.slice(0, 200)); }
       }
       if (got[3] && got[4]) { clearTimeout(timer); finish(); }
     });

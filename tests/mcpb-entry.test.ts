@@ -24,6 +24,7 @@ const run = (extraArgs: string[]) =>
 describe("Desktop bundle entry", () => {
   it("serves with no arguments", async () => {
     const r = await run([]);
+    expect(r.stray).toEqual([]); // nothing but JSON-RPC on stdout, or a real host loses the connection
     expect(r.server?.name).toBe("kindle-mcp");
     expect(r.tools).toBe(TOOLS.length);
     expect(r.prompts).toBe(2);
@@ -31,6 +32,7 @@ describe("Desktop bundle entry", () => {
   }, 30_000);
   it("serves when the host repeats the script path and a subcommand", async () => {
     const r = await run([join(root, "dist", "mcpb-entry.js"), "serve"]);
+    expect(r.stray).toEqual([]);
     expect(r.tools).toBe(TOOLS.length);
   }, 30_000);
 });
