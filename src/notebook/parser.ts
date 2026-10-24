@@ -48,16 +48,6 @@ export function decodeAnnotationId(rowId: string): [string | null, number | null
   return [null, null];
 }
 
-/** The annotation pane carries the book's own title/author, so a book can be synced by ASIN alone. */
-export function parsePaneBook(html: string): Book | null {
-  const $ = cheerio.load(html);
-  const asin = val($, S.PANE_ASIN);
-  const title = $(S.PANE_TITLE).first();
-  if (!asin || !title.length) return null;
-  const author = $(S.PANE_AUTHOR).first();
-  return makeBook({ bookId: asin, asin, title: text(title, " "), author: author.length ? text(author, " ") : "" });
-}
-
 /** Returns [books, nextPageToken]. Token is '' on the last page. */
 export function parseLibrary(html: string): [Book[], string] {
   const $ = cheerio.load(html);
@@ -96,9 +86,8 @@ export function parseAnnotations(html: string, bookId: string): [Highlight[], st
     const noteEl = row.find(S.NOTE_TEXT).first();
     const body = textEl.length ? text(textEl, " ") : "";
     const note = noteEl.length ? text(noteEl, "\n") : "";
-    const headerEl = row.find(S.HIGHLIGHT_HEADER).first().length
-      ? row.find(S.HIGHLIGHT_HEADER).first()
-      : row.find(S.NOTE_HEADER).first();
+    const highlightHeader = row.find(S.HIGHLIGHT_HEADER).first();
+    const headerEl = highlightHeader.length ? highlightHeader : row.find(S.NOTE_HEADER).first();
     const header = headerEl.length ? text(headerEl, " ") : "";
     if (!(body || note || header)) return;
 
@@ -121,7 +110,7 @@ export function parseAnnotations(html: string, bookId: string): [Highlight[], st
       }
     }
     const undisplayable = row.find(S.HIGHLIGHT_EMPTY).length > 0;
-    const hasHighlightHeader = row.find(S.HIGHLIGHT_HEADER).length > 0;
+    const hasHighlightHeader = highlightHeader.length > 0;
 
     out.push(
       makeHighlight({

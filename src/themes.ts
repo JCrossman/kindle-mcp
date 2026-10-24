@@ -1,5 +1,5 @@
-import { STOPWORDS, type HighlightRow } from "./store.js";
-import { COMMON_WORDS, FUNCTION_WORDS } from "./vault/words.js";
+import type { HighlightRow } from "./store.js";
+import { COMMON_WORDS, FUNCTION_WORDS, STOPWORDS } from "./words.js";
 
 export interface Theme {
   /** The words the highlights in this theme share, most shared first. */

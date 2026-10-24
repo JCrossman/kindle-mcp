@@ -3,7 +3,10 @@
  * them (whole words, any case), with guards so a vault full of short or generic titles doesn't
  * link every other word. Pure: the caller supplies the notes.
  */
-import { COMMON_WORDS, FUNCTION_WORDS } from "./words.js";
+import { COMMON_WORDS, FUNCTION_WORDS } from "../words.js";
+
+/** A note's title: its file name without `.md`. */
+export const noteTitle = (path: string): string => (path.split("/").pop() ?? path).replace(/\.md$/i, "");
 
 export interface LinkableNote {
   /** Vault-relative, `/` separators, with `.md`. */
@@ -162,7 +165,7 @@ export class Linker {
 
   /** What goes inside [[ ]]: the title when no other note shares it, else the path. */
   linkText(path: string): string {
-    const title = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+    const title = noteTitle(path);
     return (this.titleCount.get(fold(title.normalize("NFC"))) ?? 0) > 1 ? path.replace(/\.md$/i, "") : title;
   }
 

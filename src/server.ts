@@ -5,30 +5,35 @@
  * Claude Desktop does not pass server instructions to the model, so everything a client must
  * know to act (the @command flow, what `truncated` means) is in tool descriptions and results.
  */
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  ErrorCode,
-  GetPromptRequestSchema,
-  ListPromptsRequestSchema,
-  McpError,
-  type CallToolResult,
-  type GetPromptResult,
-  type ToolAnnotations,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, GetPromptResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { actionsTable, COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, type CommandWithAction } from "./commands.js";
+import { COMMANDS, commandSpec, resolveTag, UNKNOWN_ACTION, withActions, type Command } from "./commands.js";
 import { ensureDirs, expand, seedSharedVault, vaultMismatch, vaultProblem, writeSettingsFile, type Config } from "./config.js";
 import { loadSession } from "./notebook/session.js";
-import { Store, type HighlightRow } from "./store.js";
+import { exportBook } from "./obsidian.js";
+import { routePendingPrompt, weeklyBriefPrompt } from "./prompts.js";
+import { Store, type DoneCommand, type HighlightRow, type PendingHighlight } from "./store.js";
 import { findThemes } from "./themes.js";
-import { normalizeFolder } from "./vault/write.js";
+import { fileCommand, highlightLink, learnedTags, readNote, teachTag, writeAgentNote } from "./vault/file.js";
+import type { SearchHit } from "./vault/index.js";
+import type { Linker } from "./vault/linkify.js";
+import {
+  linkExistingPreference,
+  linkExistingStep,
+  openVault,
+  runVaultStep,
+  vaultErrorMessage,
+  withVaultLease,
+  type OpenVault,
+} from "./vault/run.js";
+import { normalizeFolder, Vault } from "./vault/write.js";
 
-export const CHAR_LIMIT = 25_000;
+const CHAR_LIMIT = 25_000;
 /** The package version, so the server reports the version it was built as. */
 export const SERVER_VERSION: string = (createRequire(import.meta.url)("../package.json") as { version: string }).version;
 
@@ -63,35 +68,48 @@ export function serverInstructions(): string {
 
 const cut = (s: string, n: number): string => (Array.from(s).length > n ? `${Array.from(s).slice(0, n - 1).join("")}...` : s);
 
-/** Drop empty fields and, unless asked, the verbose action text, to keep responses small. */
-function slim(h: HighlightRow, withActions = false): Json {
+/**
+ * A highlight without its empty fields, to keep responses small. `commands` replaces the commands
+ * shown (a pending highlight shows what is left); with `actions` each carries its action text.
+ */
+function slim(h: HighlightRow, opts: { commands?: Command[]; actions?: boolean } = {}): Json {
+  const shown = opts.commands ?? h.commands;
   const keep = ["id", "title", "author", "text", "note", "location_start", "page", "truncated", "commands", "first_seen"] as const;
   const out: Json = {};
   for (const k of keep) {
-    const v = h[k];
+    const v = k === "commands" ? (opts.actions ? withActions(shown) : shown) : h[k];
     if (v === null || v === undefined || v === "" || v === false || (Array.isArray(v) && !v.length)) continue;
-    out[k] = k === "commands" && !withActions ? (v as CommandWithAction[]).map(({ tag, arg }) => ({ tag, arg })) : v;
+    out[k] = v;
   }
   if (h.commands.length && h.raw_note && h.raw_note.trim() !== h.note.trim()) out.note_as_typed = h.raw_note;
   return out;
 }
 
-/** A pending highlight: what is left to do (with each command's action) and what is already done. */
-function pendingView(h: HighlightRow): Json {
-  const out = slim({ ...h, commands: h.remaining ?? h.commands }, true);
-  if (h.commands.length && h.raw_note && h.raw_note.trim() !== h.note.trim()) out.note_as_typed = h.raw_note;
-  if (h.already_done?.length) out.already_done = h.already_done.map(({ tag, arg, path }) => ({ tag, arg, ...(path ? { path } : {}) }));
+const doneView = (done: DoneCommand[]): Json[] => done.map(({ tag, arg, path }) => ({ tag, arg, ...(path ? { path } : {}) }));
+
+/** A pending highlight: what is left to do (with each command's action, unless not wanted) and what is already done. */
+function pendingView(h: PendingHighlight, actions = true): Json {
+  const out = slim(h, { commands: h.remaining, actions });
+  if (h.already_done.length) out.already_done = doneView(h.already_done);
   return out;
 }
+
+/** A vault note found by search, with a paste-ready link. */
+const noteHit = (linker: Linker) => (n: SearchHit): Json => ({ title: n.title, path: n.path, link: `[[${linker.linkText(n.path)}]]`, snippet: n.snippet });
+
+/** The lists a long reply is cut by: halved until the reply fits. */
+const LISTS = ["highlights", "books", "notes"] as const;
 
 function reply(payload: Json): CallToolResult {
   let text = JSON.stringify(payload, null, 2);
   let body = payload;
-  if (text.length > CHAR_LIMIT && Array.isArray(payload.highlights)) {
-    let items = payload.highlights as unknown[];
-    while (items.length && text.length > CHAR_LIMIT) {
-      items = items.slice(0, Math.max(1, Math.floor(items.length / 2)));
-      body = { ...payload, highlights: items, truncated_response: true, hint: "Response cut to fit. Use limit/offset or a narrower query." };
+  const list = LISTS.find((k) => Array.isArray(payload[k]));
+  if (text.length > CHAR_LIMIT && list) {
+    let items = payload[list] as unknown[];
+    while (items.length > 1 && text.length > CHAR_LIMIT) {
+      items = items.slice(0, Math.floor(items.length / 2));
+      const count = typeof payload.count === "number" ? { count: items.length } : {}; // what is returned, so paging by it skips nothing
+      body = { ...payload, [list]: items, ...count, truncated_response: true, hint: "Response cut to fit. Use limit/offset or a narrower query." };
       text = JSON.stringify(body, null, 2);
     }
   }
@@ -156,14 +174,10 @@ export function pendingInstruction(act: boolean, vault: VaultState, more: boolea
 function pendingSummary(cfg: Config, store: Store, vault: VaultState): Json {
   const all = store.pendingCommands(null, Number.MAX_SAFE_INTEGER);
   if (!all.length) return { count: 0 };
-  const tags = [...new Set(all.flatMap((h) => h.remaining!.map((c) => c.tag)))];
+  const tags = [...new Set(all.flatMap((h) => h.remaining.map((c) => c.tag)))];
   const highlights = all.slice(0, PENDING_IN_SYNC).map((h) => {
-    const v = pendingView(h);
+    const v = pendingView(h, false);
     if (typeof v.text === "string") v.text = cut(v.text, 500);
-    for (const c of (v.commands as Json[]) ?? []) {
-      delete c.action;
-      delete c.known;
-    }
     return v;
   });
   return {
@@ -177,83 +191,9 @@ function pendingSummary(cfg: Config, store: Store, vault: VaultState): Json {
   };
 }
 
-function loadPrompt(name: string, vars: Record<string, string>): string {
-  let text = readFileSync(new URL(`./prompts/${name}.md`, import.meta.url), "utf8");
-  for (const [k, v] of Object.entries(vars)) text = text.replaceAll(`{{${k}}}`, v);
-  return text;
-}
-
-export function routePendingPrompt(tag?: string, dryRun = false): string {
-  const t = tag?.trim().replace(/^@+/, "");
-  return loadPrompt("route-pending", {
-    commands_table: actionsTable(),
-    tag_clause: t ? ` and \`tag\` = \`${t}\`` : "",
-    dry_run_clause: dryRun
-      ? "\n**DRY RUN.** List what you would do for each pending highlight. Write nothing anywhere, and do not call " +
-        "`kindle_complete_command`, `kindle_mark_command_done` or `kindle_export_to_obsidian`.\n"
-      : "",
-  });
-}
-
-export function weeklyBriefPrompt(since = "7d"): string {
-  return loadPrompt("weekly-brief", { since });
-}
-
-/** The router prompts. Arguments are all optional strings, as MCP prompt arguments must be. */
-interface PromptSpec {
-  name: string;
-  title: string;
-  description: string;
-  arguments: Array<{ name: string; description: string; required: false }>;
-  render(args: Record<string, string>): string;
-}
-
-export const PROMPTS: PromptSpec[] = [
-  {
-    name: "kindle_route_pending",
-    title: "Route pending @commands",
-    description:
-      "Walk every pending @command, do what each one asks, and save it. Runner-agnostic: works interactively or from a scheduled task.",
-    arguments: [
-      { name: "tag", description: "Only route this tag, e.g. 'post'", required: false },
-      { name: "dry_run", description: "'true' to list planned actions without writing or marking anything", required: false },
-    ],
-    render: (a) => routePendingPrompt(a.tag, a.dry_run === "true"),
-  },
-  {
-    name: "kindle_weekly_brief",
-    title: "Weekly reading brief",
-    description: "Cluster recent highlights into themes and draft one cited angle per theme.",
-    arguments: [{ name: "since", description: "Span like '7d' or an ISO date; default 7d", required: false }],
-    render: (a) => weeklyBriefPrompt(a.since || "7d"),
-  },
-];
-
-/**
- * Prompts are registered on the low-level server rather than through McpServer.registerPrompt:
- * SDK 1.30 validates `params.arguments` against the zod schema even when a client omits the
- * key entirely (legal per the spec, and what "run it with no options" looks like), and rejects
- * `undefined`. Here a missing object means no arguments.
- */
-function registerPrompts(server: McpServer): void {
-  server.server.registerCapabilities({ prompts: {} });
-  server.server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: PROMPTS.map(({ name, title, description, arguments: args }) => ({ name, title, description, arguments: args })),
-  }));
-  server.server.setRequestHandler(GetPromptRequestSchema, async (request): Promise<GetPromptResult> => {
-    const spec = PROMPTS.find((p) => p.name === request.params.name);
-    if (!spec) throw new McpError(ErrorCode.InvalidParams, `Prompt ${request.params.name} not found`);
-    const given = request.params.arguments ?? {};
-    const args: Record<string, string> = {};
-    for (const a of spec.arguments) {
-      const v = given[a.name];
-      if (v !== undefined && v !== null && v !== "") args[a.name] = String(v);
-    }
-    return { description: spec.description, messages: [{ role: "user", content: { type: "text", text: spec.render(args) } }] };
-  });
-}
-
 let loginInProgress = false;
+
+const INDEXING = "The vault is still being indexed. Try again in a moment.";
 
 const NO_VAULT =
   "No Obsidian vault is set. Ask the user for their vault's folder and save it with kindle_set_vault (every Claude " +
@@ -272,22 +212,40 @@ const SIGN_IN_NEXT =
 export function createServer(cfg: Config): McpServer {
   const server = new McpServer({ name: "kindle-mcp", version: SERVER_VERSION }, { instructions: serverInstructions() });
 
-  const withStore = <T>(fn: (store: Store) => T): T => {
-    ensureDirs(cfg);
-    const store = new Store(cfg.dbPath);
+  /** One tool call against the store. An unexpected error comes back as the same JSON failure as the others. */
+  const withStore = async (fn: (store: Store) => CallToolResult | Promise<CallToolResult>): Promise<CallToolResult> => {
+    let store: Store | undefined;
     try {
-      return fn(store);
+      ensureDirs(cfg);
+      store = new Store(cfg.dbPath);
+      return await fn(store);
+    } catch (e) {
+      return fail((e as Error).message);
     } finally {
-      store.close();
+      store?.close();
     }
   };
-  const withStoreAsync = async <T>(fn: (store: Store) => Promise<T>): Promise<T> => {
-    ensureDirs(cfg);
-    const store = new Store(cfg.dbPath);
+
+  /**
+   * `fn` on the open vault, which is closed afterwards. A write waits for a complete index and holds
+   * the vault lease (no writes on a half-read index, one writer at a time); a read takes the index as it is.
+   */
+  const inVault = (store: Store, ms: number, write: boolean, fn: (open: OpenVault) => CallToolResult): CallToolResult => {
+    let open: OpenVault;
     try {
-      return await fn(store);
+      open = openVault(cfg, store, Date.now() + ms, write);
+    } catch (e) {
+      return fail(vaultErrorMessage(e));
+    }
+    try {
+      if (!write) return fn(open);
+      if (!open.complete) return fail(INDEXING);
+      const out = withVaultLease(store, () => fn(open));
+      return out === "busy" ? fail("Another kindle-mcp process is writing to the vault. Try again in a minute.") : out;
+    } catch (e) {
+      return fail(`${vaultErrorMessage(e)}${open.complete ? "" : ` ${INDEXING}`}`);
     } finally {
-      store.close();
+      open.close();
     }
   };
 
@@ -362,12 +320,7 @@ export function createServer(cfg: Config): McpServer {
     },
     async ({ since, limit }) =>
       withStore((store) => {
-        let cutoff: string;
-        try {
-          cutoff = parseSince(since);
-        } catch (e) {
-          return fail((e as Error).message);
-        }
+        const cutoff = parseSince(since); // an unreadable span comes back as the failure
         const items = store.newSince(cutoff, limit);
         return reply({ since: cutoff, count: items.length, highlights: items.map((h) => slim(h)) });
       }),
@@ -391,12 +344,7 @@ export function createServer(cfg: Config): McpServer {
     },
     async ({ since, max_themes, limit }) =>
       withStore((store) => {
-        let cutoff: string;
-        try {
-          cutoff = parseSince(since);
-        } catch (e) {
-          return fail((e as Error).message);
-        }
+        const cutoff = parseSince(since);
         const items = store.newSince(cutoff, limit);
         const { themes, unthemed } = findThemes(items, max_themes);
         return reply({
@@ -432,7 +380,7 @@ export function createServer(cfg: Config): McpServer {
     async ({ tag, limit }) =>
       withStore((store) => {
         const items = store.pendingCommands(tag ?? null, limit);
-        return reply({ count: items.length, content_boundary: UNTRUSTED_CONTENT_WARNING, highlights: items.map(pendingView) });
+        return reply({ count: items.length, content_boundary: UNTRUSTED_CONTENT_WARNING, highlights: items.map((h) => pendingView(h)) });
       }),
   );
 
@@ -451,7 +399,7 @@ export function createServer(cfg: Config): McpServer {
       annotations: READ,
     },
     async ({ highlight_id }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         const h = store.getHighlight(highlight_id);
         if (!h) return fail(`No highlight with id '${highlight_id}'.`);
         const states = h.commands_done_at ? { remaining: [], done: [] } : store.commandStates(h);
@@ -460,9 +408,7 @@ export function createServer(cfg: Config): McpServer {
         for (const t of tags) sameTag[t] = store.sameTagInBook(h.book_id, t, h.id).map((x) => slim(x));
         const related = store.related(`${h.text} ${h.note}`, h.id, h.book_id, 5);
         const highlight: Json = {
-          ...slim({ ...h, commands: states.remaining }, true),
-          ...(h.commands.length && h.raw_note.trim() !== h.note.trim() ? { note_as_typed: h.raw_note } : {}),
-          ...(states.done.length ? { already_done: states.done.map(({ tag, arg, path }) => ({ tag, arg, ...(path ? { path } : {}) })) } : {}),
+          ...pendingView({ ...h, remaining: states.remaining, already_done: states.done }),
           book_id: h.book_id,
           location_end: h.location_end,
           color: h.color,
@@ -478,24 +424,18 @@ export function createServer(cfg: Config): McpServer {
           related: related.map((x) => slim(x)),
         };
         if (cfg.obsidianVault) {
-          const { openVault } = await import("./vault/run.js");
-          const { bookNotePath } = await import("./obsidian.js");
-          const { sourceLink } = await import("./vault/file.js");
           try {
             const open = openVault(cfg, store, Date.now() + 5000, false);
             try {
-              const book = store.findBook(h.book_id);
-              const path = book && bookNotePath(store, { vault: open.ctx.vault, index: open.index }, book);
-              if (path) payload.source_link = sourceLink(open.ctx, h, path);
-              payload.related_notes = open.index
-                .related(`${h.text} ${h.note}`, 5)
-                .map((n) => ({ title: n.title, path: n.path, link: `[[${open.ctx.linker.linkText(n.path)}]]`, snippet: n.snippet }));
+              payload.source_link = highlightLink(open.ctx, h);
+              payload.related_notes = open.ctx.index.related(`${h.text} ${h.note}`, 5).map(noteHit(open.ctx.linker));
               if ((payload.related_notes as unknown[]).length) payload.related_notes_hint = READ_HINT;
             } finally {
               open.close();
             }
-          } catch {
-            // no usable vault: the store's context still helps
+          } catch (e) {
+            // The store's context still helps; the agent learns of the vault's problem before writing anything.
+            payload.vault_error = vaultErrorMessage(e);
           }
         }
         return reply(payload);
@@ -521,54 +461,41 @@ export function createServer(cfg: Config): McpServer {
         content: z.string().max(60_000).optional().describe("Markdown for @post and @research: the draft or the research write-up"),
         related_notes: z.array(z.string().max(200)).max(8).optional().describe("Titles of related vault notes to link at the end"),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: WRITE,
     },
     async ({ highlight_id, tag, title, content, related_notes }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(`${NO_VAULT} For now, put the result in your reply and call kindle_mark_command_done.`);
         const h = store.getHighlight(highlight_id);
         if (!h) return fail(`No highlight with id '${highlight_id}'.`);
-        const want = resolveTag(tag.trim().replace(/^@+/, ""));
+        const want = resolveTag(tag);
         if (!h.commands.some((c) => c.tag === want)) {
           return fail(`Highlight ${h.id} has no @${want}. Its commands: ${h.commands.map((c) => `@${c.tag}`).join(", ") || "none"}.`);
         }
+        // Whether the highlight is done now, and what is left of it.
+        const progress = (): Json => {
+          const after = store.getHighlight(h.id)!;
+          return { highlight_done: Boolean(after.commands_done_at), remaining: after.commands_done_at ? [] : store.commandStates(after).remaining };
+        };
         const states = store.commandStates(h);
         const cmd = h.commands_done_at ? undefined : states.remaining.find((c) => c.tag === want);
         if (!cmd) {
           const done = states.done.find((d) => d.tag === want);
-          return reply({ ok: true, already_done: true, ...(done?.path ? { path: done.path } : {}) });
+          return reply({ ok: true, already_done: true, ...(done?.path ? { path: done.path } : {}), ...progress() });
         }
         const agent = commandSpec(want)?.doneBy === "agent";
         if (agent && !content?.trim()) return fail(`@${want} needs your text in \`content\` (markdown) and a short \`title\`.`);
 
-        const { openVault, vaultErrorMessage, withVaultLease } = await import("./vault/run.js");
-        const { exportBook } = await import("./obsidian.js");
-        const { fileCommand, writeAgentNote } = await import("./vault/file.js");
-        let open;
-        try {
-          open = openVault(cfg, store, Date.now() + 30_000);
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        }
-        try {
-          if (!open.complete) return fail("The vault is still being indexed. Try again in a moment.");
-          const ctx = open.ctx;
-          const index = open.index;
-          const out = withVaultLease(store, (): Json => {
-            exportBook(store, h.book_id, { vault: ctx.vault, index, linker: cfg.linkNotes ? ctx.linker : null });
-            if (agent) return { ...writeAgentNote(ctx, h, cmd, { title, content: content!, related: related_notes }) };
+        return inVault(store, 30_000, true, ({ ctx }) => {
+          exportBook(store, h.book_id, { vault: ctx.vault, index: ctx.index, linker: cfg.linkNotes ? ctx.linker : null });
+          let out: Json;
+          if (agent) out = { ...writeAgentNote(ctx, h, cmd, { title, content: content!, related: related_notes }) };
+          else {
             const f = fileCommand(ctx, h, cmd);
-            return { path: f.to, outcome: f.outcome, ...(f.reason ? { reason: f.reason } : {}) };
-          });
-          if (out === "busy") return fail("Another kindle-mcp process is writing to the vault. Try again in a minute.");
-          const after = store.getHighlight(h.id)!;
-          const left = after.commands_done_at ? [] : store.commandStates(after).remaining.map(({ tag: t, arg }) => ({ tag: t, arg }));
-          return reply({ ok: true, ...out, highlight_done: Boolean(after.commands_done_at), remaining: left });
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        } finally {
-          open.close();
-        }
+            out = { path: f.to, outcome: f.outcome, ...(f.reason ? { reason: f.reason } : {}) };
+          }
+          return reply({ ok: true, ...out, ...progress() });
+        });
       }),
   );
 
@@ -610,29 +537,19 @@ export function createServer(cfg: Config): McpServer {
       annotations: READ,
     },
     async ({ query, limit, include_kindle }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(NO_VAULT);
-        const { openVault, vaultErrorMessage } = await import("./vault/run.js");
-        let open;
-        try {
-          open = openVault(cfg, store, Date.now() + 10_000, false);
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        }
-        try {
-          const hits = open.index.search(query, limit, include_kindle);
-          const linker = open.ctx.linker;
+        return inVault(store, 10_000, false, ({ ctx, complete }) => {
+          const hits = ctx.index.search(query, limit, include_kindle);
           return reply({
             query,
             count: hits.length,
             content_boundary: UNTRUSTED_CONTENT_WARNING,
-            ...(open.complete ? {} : { index_complete: false }),
-            notes: hits.map((n) => ({ title: n.title, path: n.path, link: `[[${linker.linkText(n.path)}]]`, snippet: n.snippet })),
+            ...(complete ? {} : { index_complete: false }),
+            notes: hits.map(noteHit(ctx.linker)),
             ...(hits.length ? { hint: READ_HINT } : {}),
           });
-        } finally {
-          open.close();
-        }
+        });
       }),
   );
 
@@ -653,24 +570,9 @@ export function createServer(cfg: Config): McpServer {
       annotations: READ,
     },
     async ({ note, max_chars }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(NO_VAULT);
-        const { openVault, vaultErrorMessage } = await import("./vault/run.js");
-        const { readNote } = await import("./vault/file.js");
-        let open;
-        try {
-          open = openVault(cfg, store, Date.now() + 10_000, false);
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        }
-        try {
-          return reply({ content_boundary: UNTRUSTED_CONTENT_WARNING, ...readNote(open.ctx, note, max_chars) });
-        } catch (e) {
-          const indexing = open.complete ? "" : " The vault is still being indexed; try again in a moment.";
-          return fail(`${vaultErrorMessage(e)}${indexing}`);
-        } finally {
-          open.close();
-        }
+        return inVault(store, 10_000, false, ({ ctx }) => reply({ content_boundary: UNTRUSTED_CONTENT_WARNING, ...readNote(ctx, note, max_chars) }));
       }),
   );
 
@@ -688,24 +590,13 @@ export function createServer(cfg: Config): McpServer {
         tag: z.string().min(1).max(60).describe("The tag as typed on the Kindle, e.g. 'roadmap' or '@roadmap'"),
         note: z.string().max(300).optional().describe("The note's name or vault path, e.g. 'Roadmap' or 'Work/Roadmap.md'; leave out to forget the tag"),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: WRITE,
     },
     async ({ tag, note }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(NO_VAULT);
-        const { openVault, vaultErrorMessage, withVaultLease } = await import("./vault/run.js");
-        const { teachTag } = await import("./vault/file.js");
-        let open;
-        try {
-          open = openVault(cfg, store, Date.now() + 30_000);
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        }
-        try {
-          if (!open.complete) return fail("The vault is still being indexed. Try again in a moment.");
-          const ctx = open.ctx;
-          const out = withVaultLease(store, () => teachTag(ctx, tag, note ?? null));
-          if (out === "busy") return fail("Another kindle-mcp process is writing to the vault. Try again in a minute.");
+        return inVault(store, 30_000, true, ({ ctx }) => {
+          const out = teachTag(ctx, tag, note ?? null);
           if (out.note === null) {
             return reply({ ok: true, tag: out.tag, forgotten: true, message: `@${out.tag} goes to Unrouted again, unless a note is named like it.` });
           }
@@ -716,11 +607,7 @@ export function createServer(cfg: Config): McpServer {
               ? { tell_user: `${out.left_in_unrouted} entr${out.left_in_unrouted === 1 ? "y was" : "ies were"} also filed, but stayed in Unrouted because they were edited there; delete them there if you like.` }
               : {}),
           });
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        } finally {
-          open.close();
-        }
+        });
       }),
   );
 
@@ -742,33 +629,12 @@ export function createServer(cfg: Config): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ book, apply, remember }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(NO_VAULT);
         if (book && !store.findBook(book)) return fail(`No book matches '${book}'. Call kindle_list_books to see titles.`);
-        const { openVault, setLinkExistingPreference, vaultErrorMessage, withVaultLease } = await import("./vault/run.js");
-        const { applyBackfill, planBackfill } = await import("./vault/backfill.js");
-        let open;
-        try {
-          open = openVault(cfg, store, Date.now() + 30_000);
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        }
-        try {
-          if (!open.complete) return fail("The vault is still being indexed. Try again in a moment.");
-          const ctx = open.ctx;
-          const out = withVaultLease(store, (): Json => {
-            if (remember) setLinkExistingPreference(store, ctx.vault, remember);
-            if (apply) return { applied: applyBackfill(ctx, book ?? null) };
-            const { blocks, links, samples } = planBackfill(ctx, book ?? null);
-            return { preview: { blocks, links, samples } };
-          });
-          if (out === "busy") return fail("Another kindle-mcp process is writing to the vault. Try again in a minute.");
-          return reply({ ...out, ...(remember ? { remember } : {}) });
-        } catch (e) {
-          return fail(vaultErrorMessage(e));
-        } finally {
-          open.close();
-        }
+        return inVault(store, 30_000, true, ({ ctx }) =>
+          reply({ ...linkExistingStep(ctx, book ?? null, apply, remember ?? null), ...(remember ? { remember } : {}) }),
+        );
       }),
   );
 
@@ -784,10 +650,9 @@ export function createServer(cfg: Config): McpServer {
       annotations: WRITE,
     },
     async ({ book }) =>
-      withStoreAsync(async (store) => {
+      withStore((store) => {
         if (!cfg.obsidianVault) return fail(NO_VAULT);
         if (book && !store.findBook(book)) return fail(`No book matches '${book}'. Call kindle_list_books to see titles.`);
-        const { runVaultStep } = await import("./vault/run.js");
         const r = runVaultStep(cfg, store, { restoreBook: book ?? null, deadline: Date.now() + cfg.syncBudgetMs, offerLinkExisting: true });
         return r.error ? fail(r.error) : reply({ obsidian: r });
       }),
@@ -813,7 +678,7 @@ export function createServer(cfg: Config): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async ({ full, book, browser }, extra) =>
-      withStoreAsync(async (store) => {
+      withStore(async (store) => {
         const { AuthRequired } = await import("./notebook/client.js");
         const { syncCloud } = await import("./sync.js");
         const deadline = Date.now() + cfg.syncBudgetMs;
@@ -832,7 +697,6 @@ export function createServer(cfg: Config): McpServer {
         }
         let vault: VaultState = "none";
         if (cfg.obsidianVault) {
-          const { runVaultStep } = await import("./vault/run.js");
           const { link_existing, unknown_tags, ...obsidian } = runVaultStep(cfg, store, { deadline: deadline + VAULT_GRACE_MS, offerLinkExisting: true });
           payload.obsidian = obsidian;
           vault = obsidian.error ? "broken" : "ready";
@@ -862,7 +726,7 @@ export function createServer(cfg: Config): McpServer {
       annotations: READ,
     },
     async () =>
-      withStoreAsync(async (store) => {
+      withStore(async (store) => {
         const s = store.status();
         const saved = loadSession(cfg.sessionPath);
         const session = saved !== null;
@@ -872,9 +736,6 @@ export function createServer(cfg: Config): McpServer {
         let tags: Json = {};
         if (cfg.obsidianVault) {
           try {
-            const { Vault } = await import("./vault/write.js");
-            const { linkExistingPreference } = await import("./vault/run.js");
-            const { learnedTags } = await import("./vault/file.js");
             const vault = Vault.open(cfg.obsidianVault, cfg.obsidianFolder);
             linkExisting = linkExistingPreference(store, vault) ?? "not answered yet";
             const learned = learnedTags(store, vault);
@@ -944,7 +805,7 @@ export function createServer(cfg: Config): McpServer {
         path: z.string().min(1).describe("The vault's top folder, e.g. ~/Documents/Notes"),
         folder: z.string().optional().describe("Folder inside the vault for the Kindle notes; default Kindle"),
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      annotations: WRITE,
     },
     async ({ path, folder }) => {
       const problem = vaultProblem(path);
@@ -1015,7 +876,31 @@ export function createServer(cfg: Config): McpServer {
     },
   );
 
-  registerPrompts(server);
+  // Every argument is optional: a client may leave the arguments out entirely, which the SDK reads as none.
+  const userPrompt = (description: string, text: string): GetPromptResult => ({ description, messages: [{ role: "user", content: { type: "text", text } }] });
+  const ROUTE = "Walk every pending @command, do what each one asks, and save it. Runner-agnostic: works interactively or from a scheduled task.";
+  server.registerPrompt(
+    "kindle_route_pending",
+    {
+      title: "Route pending @commands",
+      description: ROUTE,
+      argsSchema: {
+        tag: z.string().optional().describe("Only route this tag, e.g. 'post'"),
+        dry_run: z.string().optional().describe("'true' to list planned actions without writing or marking anything"),
+      },
+    },
+    ({ tag, dry_run }) => userPrompt(ROUTE, routePendingPrompt(tag, dry_run === "true")),
+  );
+  const BRIEF = "Cluster recent highlights into themes and draft one cited angle per theme.";
+  server.registerPrompt(
+    "kindle_weekly_brief",
+    {
+      title: "Weekly reading brief",
+      description: BRIEF,
+      argsSchema: { since: z.string().optional().describe("Span like '7d' or an ISO date; default 7d") },
+    },
+    ({ since }) => userPrompt(BRIEF, weeklyBriefPrompt(since || "7d")),
+  );
 
   return server;
 }

@@ -23,9 +23,10 @@ export function normalizeFolder(folder: string): string {
 }
 
 export const eolOf = (text: string): "\n" | "\r\n" => (text.includes("\r\n") ? "\r\n" : "\n");
-export const withEol = (text: string, eol: string): string => text.replace(/\r?\n/g, eol);
+const withEol = (text: string, eol: string): string => text.replace(/\r?\n/g, eol);
 
-function sleep(ms: number): void {
+/** Blocks the thread for `ms`: the store and the vault are synchronous, so their retries are too. */
+export function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
@@ -45,7 +46,7 @@ function renameWithRetry(from: string, to: string): void {
         }
         throw e;
       }
-      sleep(100);
+      sleepSync(100);
     }
   }
 }
@@ -207,7 +208,7 @@ export function insertUnderHeading(
   const eol = eolOf(text);
   const lines = text.split(/\r?\n/);
   const bodyLine = text.slice(0, splitFrontmatter(text).bodyStart).split(/\r?\n/).length - 1;
-  const want = new RegExp(`^#{1,6}[ \\t]+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[ \\t#]*$`, "i");
+  const want = new RegExp(`^#{1,6}[ \\t]+${escapeRe(heading)}[ \\t#]*$`, "i");
   let fence: string | null = null;
   let at = -1;
   let nextHeading = -1;

@@ -14,9 +14,6 @@ export const BOOK_ANNOTATED_DATE = "input[id^='kp-notebook-annotated-date']"; //
 export const LIBRARY_NEXT_TOKEN = ".kp-notebook-library-next-page-start"; // input value, empty on last page
 
 // Annotation pane for one book (verified against a live HAR capture, 2026-09-21)
-export const PANE_TITLE = "h3.kp-notebook-metadata";
-export const PANE_AUTHOR = "p.kp-notebook-metadata.a-color-secondary";
-export const PANE_ASIN = "#kp-notebook-asin";
 export const ANNOTATION_ROW = "#kp-notebook-annotations > div.a-row.a-spacing-base";
 // Page 2+ responses are bare fragments: the rows sit at top level with no container.
 export const ANNOTATION_ROW_FRAGMENT = "div.a-row.a-spacing-base";

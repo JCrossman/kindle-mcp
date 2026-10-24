@@ -5,11 +5,11 @@ import { describe, expect, it } from "vitest";
 
 import { loadConfig, type Config } from "../src/config.js";
 import { makeBook, makeHighlight } from "../src/models.js";
-import { renderHighlightV1 } from "../src/obsidian.js";
 import { Store } from "../src/store.js";
 import { applyBackfill, planBackfill } from "../src/vault/backfill.js";
 import { writeAgentNote } from "../src/vault/file.js";
 import { LEASE, openVault, runVaultStep } from "../src/vault/run.js";
+import { renderHighlightV1 } from "./helpers/v1.js";
 
 interface World {
   cfg: Config;

@@ -9,9 +9,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { COMMANDS } from "../src/commands.js";
 import { loadConfig } from "../src/config.js";
 import { parseAnnotations, parseLibrary } from "../src/notebook/parser.js";
-import {
-  createServer, parseSince, routePendingPrompt, serverInstructions, UNTRUSTED_CONTENT_WARNING, weeklyBriefPrompt,
-} from "../src/server.js";
+import { routePendingPrompt, weeklyBriefPrompt } from "../src/prompts.js";
+import { createServer, parseSince, serverInstructions, UNTRUSTED_CONTENT_WARNING } from "../src/server.js";
 import { saveSession } from "../src/notebook/session.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";
@@ -242,6 +241,20 @@ describe("MCP server", () => {
     expect(res.pending.act_now).toBe(false);
     expect(res.pending.instruction).toContain("couldn't be written");
     expect(res.pending.instruction).not.toContain("kindle_mark_command_done");
+  });
+
+  it("cuts a reply that is too long, and counts what it returns", async () => {
+    const { client, home } = await connected();
+    const store = new Store(join(home, "kindle.db"));
+    for (let i = 0; i < 60; i++) {
+      store.upsertHighlight("B0FAKE0004", makeHighlight({ bookId: "B0FAKE0004", text: "long ".repeat(400), locationStart: 5000 + i, amazonId: `B0FAKE0004:${i}:HIGHLIGHT:y${i}` }));
+    }
+    store.close();
+    const res = (await call(client, "kindle_get_highlights", { book: "B0FAKE0004", limit: 500 })).data;
+    expect(res.truncated_response).toBe(true);
+    expect(res.highlights.length).toBeLessThan(63);
+    expect(res.count).toBe(res.highlights.length); // a client paging on by count skips nothing
+    expect(JSON.stringify(res, null, 2).length).toBeLessThanOrEqual(25_000);
   });
 
   it("returns a partial sync when out of time, keeps the result small, and continues on the next call", async () => {

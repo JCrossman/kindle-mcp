@@ -9,8 +9,9 @@ import { tmpdir } from "node:os";
 
 import { COMMANDS, commandsTable } from "../src/commands.js";
 import { loadConfig, SETTING_ENV } from "../src/config.js";
-import { bundleUrl, pluginFiles, promptText } from "../src/plugin.js";
-import { createServer, routePendingPrompt, SERVER_VERSION } from "../src/server.js";
+import { bundleUrl, pluginFiles } from "../src/plugin.js";
+import { promptText, routePendingPrompt } from "../src/prompts.js";
+import { createServer, SERVER_VERSION } from "../src/server.js";
 
 const root = join(__dirname, "..");
 

@@ -8,9 +8,9 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync } fr
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { STOPWORDS, Store } from "../store.js";
+import { ftsQuery, relatedQuery } from "../words.js";
 import { readFrontmatter, splitFrontmatter } from "./frontmatter.js";
-import { Linker, type LinkableNote } from "./linkify.js";
+import { Linker, noteTitle, type LinkableNote } from "./linkify.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS notes (
@@ -38,8 +38,6 @@ const WALK_EVERY_MS = 30_000;
 
 export interface IndexedNote extends LinkableNote {
   source: string | null;
-  asin: string | null;
-  fmTitle: string | null;
   kindleHighlight: string | null;
   excluded: boolean;
   optOut: boolean;
@@ -240,7 +238,7 @@ export class VaultIndex {
       for (const [path, st] of files) {
         const k = known.get(path);
         if (k && k.mtime_ms === st.mtime && k.size === st.size) continue;
-        const title = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+        const title = noteTitle(path);
         upsert.run(path, st.mtime, st.size, title, this.excluded(path) ? 1 : 0);
       }
       this.db.exec("COMMIT");
@@ -276,7 +274,7 @@ export class VaultIndex {
           }
           const fm = readFrontmatter(text);
           const excluded = this.excluded(path);
-          const title = (path.split("/").pop() ?? path).replace(/\.md$/i, "");
+          const title = noteTitle(path);
           update.run(JSON.stringify(fm.aliases), fm.source, fm.asin, fm.title, fm.kindleHighlight, fm.linkOptOut ? 1 : 0, excluded ? 1 : 0, path);
           dropFts.run(path);
           if (!excluded && !fm.linkOptOut) {
@@ -298,18 +296,13 @@ export class VaultIndex {
   notes(): IndexedNote[] {
     const inbox = `${this.opts.kindleFolder}/Inbox/`;
     const rows = this.db
-      .prepare("SELECT path, title, aliases, source, asin, fm_title, kindle_highlight, opt_out, ignored FROM notes")
-      .all() as Array<{
-      path: string; title: string; aliases: string; source: string | null; asin: string | null; fm_title: string | null;
-      kindle_highlight: string | null; opt_out: number; ignored: number;
-    }>;
+      .prepare("SELECT path, title, aliases, source, kindle_highlight, opt_out, ignored FROM notes")
+      .all() as Array<{ path: string; title: string; aliases: string; source: string | null; kindle_highlight: string | null; opt_out: number; ignored: number }>;
     return rows.map((r) => ({
       path: r.path,
       title: r.title,
       aliases: JSON.parse(r.aliases) as string[],
       source: r.source,
-      asin: r.asin,
-      fmTitle: r.fm_title,
       kindleHighlight: r.kindle_highlight,
       excluded: Boolean(r.ignored),
       optOut: Boolean(r.opt_out),
@@ -331,22 +324,16 @@ export class VaultIndex {
     return rows[0]?.path ?? null;
   }
 
-  /** Notes kindle-mcp wrote for one highlight's @command. */
-  outputsFor(highlightId: string): string[] {
-    return (this.db.prepare("SELECT path FROM notes WHERE kindle_highlight=?").all(highlightId) as Array<{ path: string }>).map((r) => r.path);
-  }
-
   /** Full-text search over note titles, aliases and text. The Kindle folder is left out unless asked. */
   search(query: string, limit = 8, includeKindle = false): SearchHit[] {
-    const fts = Store.ftsQuery(query);
+    const fts = ftsQuery(query);
     return fts ? this.match(fts, limit, includeKindle) : [];
   }
 
   /** Notes that share the most distinctive words with a text (for related notes). */
   related(text: string, limit = 5): SearchHit[] {
-    const words = (text.match(/[\p{L}\p{N}_]+/gu) ?? []).filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
-    const distinct = [...new Set(words.map((w) => w.toLowerCase()))].slice(0, 12);
-    return distinct.length ? this.match(distinct.map((w) => `"${w}"`).join(" OR "), limit, false) : [];
+    const fts = relatedQuery(text);
+    return fts ? this.match(fts, limit, false) : [];
   }
 
   private match(fts: string, limit: number, includeKindle: boolean): SearchHit[] {

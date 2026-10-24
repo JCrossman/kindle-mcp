@@ -56,8 +56,9 @@ everything else (other installs, tools, settings, how the notebook is read, buil
 - `src/commands.ts` — `COMMANDS` table: tag, aliases, argument style, `doneBy` (sync | agent), result, action. Single
   source of truth for parsing, tool descriptions, the router prompt and the README table (drift tests in
   `tests/docs.test.ts`).
-- `src/obsidian.ts` — book notes: blocks with the id on its own line, the 1.0 renderer (to recognise unedited
-  blocks), `filename()` (never change it: existing notes are found by it), find-by-frontmatter.
+- `src/obsidian.ts` — book notes: blocks with the id on its own line, `filename()` (never change it: existing notes
+  are found by it), find-by-frontmatter. `vault/backfill.ts` recognises unedited 1.0 blocks; tests build them with
+  `tests/helpers/v1.ts`.
 - `src/vault/` — `write.ts` (every vault write: inside the vault, no symlinks, appends, compare-and-swap,
   neutralized model output), `index.ts` (per-vault cache of names, aliases and full text; budgeted reads),
   `linkify.ts` (mention linking), `frontmatter.ts`, `file.ts` (filing, other tags, taught tags, agent notes, reading a
@@ -65,8 +66,11 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   blocks exported before, only on the user's yes), `run.ts` (the vault step: lease, no writes on a partial index).
 - `src/themes.ts` — `kindle_get_themes`: recent highlights grouped by shared content words and tags (a plural and its
   singular count as one), each theme with older highlights on the same words. Deterministic; the weekly brief leans on it.
-- `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Prompts in `src/prompts/*.md`.
-  Claude Desktop ignores server instructions: what the model must know goes in tool descriptions and results.
+- `src/words.ts` — the word lists and full-text queries the store, the vault index, linking and themes share.
+- `src/server.ts` — `createServer(cfg)` is transport-free; `serveStdio` wires stdio. Vault tools go through `inVault`
+  (a write waits for a complete index and holds the lease). Prompts: `src/prompts/*.md`, read by `src/prompts.ts`
+  (also for the CLI and the plugin). Claude Desktop ignores server instructions: what the model must know goes in tool
+  descriptions and results.
 - `src/cli.ts` — login/sync/import-clippings/export/link-existing/status/doctor/prompt/serve. `sync --on-pending CMD`
   is the trigger.
 - `src/mcpb-entry.ts` — the Claude Desktop bundle's entry. Serves unconditionally and never reads argv: Desktop's

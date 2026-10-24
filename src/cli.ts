@@ -1,23 +1,5 @@
 #!/usr/bin/env node
-/**
- * Command line: the scheduled job and the one-time login both live here.
- *
- *   kindle-mcp login                      open a browser, sign in to Amazon once
- *   kindle-mcp sync [--full] [--book X]   pull the cloud notebook (plain HTTP with saved cookies), then
- *              [--browser] [--no-export]  update the Obsidian vault if one is set
- *              [--on-pending CMD]
- *   kindle-mcp import-clippings PATH      merge a My Clippings.txt from the device
- *   kindle-mcp export [--book X]          update the Obsidian vault without contacting Amazon
- *   kindle-mcp link-existing [--apply]    preview (or apply) links in highlights exported before
- *              [--book X] [--always|--never]
- *   kindle-mcp status                     counts, pending @commands, last run
- *   kindle-mcp config [set KEY VALUE]     the settings file every client reads (vault, folder, ...)
- *              [unset KEY]
- *   kindle-mcp doctor [--asin X|--book T] dump live HTML to debug selectors
- *   kindle-mcp prompt NAME [--tag X]      print a router prompt (route-pending | weekly-brief) for any runner
- *              [--dry-run] [--since 7d]
- *   kindle-mcp serve                      run the MCP server over stdio
- */
+/** Command line: the scheduled sync, the one-time sign-in and the other commands in USAGE below. */
 import { spawnSync } from "node:child_process";
 import { realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,6 +10,7 @@ import {
   ensureDirs, expand, loadConfig, parseOnOff, SETTING_ENV, settingValue, vaultProblem, writeSettingsFile,
   type Config, type SettingKey,
 } from "./config.js";
+import type { Store } from "./store.js";
 import { normalizeFolder } from "./vault/write.js";
 import { quietExperimentalWarnings } from "./warnings.js";
 
@@ -83,7 +66,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
 
   if (cmd === "prompt") {
-    const { routePendingPrompt, weeklyBriefPrompt } = await import("./server.js");
+    const { routePendingPrompt, weeklyBriefPrompt } = await import("./prompts.js");
     const which = positionals[1];
     if (which === "route-pending") process.stdout.write(routePendingPrompt(values.tag, values["dry-run"]));
     else if (which === "weekly-brief") process.stdout.write(weeklyBriefPrompt(values.since || "7d"));
@@ -116,8 +99,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   }
   if (cmd === "doctor") return doctor(cfg, values.asin ?? null, values.book ?? null, values.browser);
 
-  const { Store } = await import("./store.js");
-  const store = new Store(cfg.dbPath);
+  const store = new (await import("./store.js")).Store(cfg.dbPath); // imported only now, with the warning filter on: node:sqlite warns as it loads
   try {
     if (cmd === "sync") {
       const { syncCloud } = await import("./sync.js");
@@ -132,7 +114,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       }
       if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
       const hook = values["on-pending"] ?? cfg.onPending;
-      const pending = store.status().pending_commands;
+      const pending = store.pendingCount();
       if (hook && pending > 0) {
         console.error(`${pending} highlight(s) with pending @commands; running: ${hook}`);
         const res = spawnSync(hook, { shell: true, stdio: "inherit", env: { ...process.env, KINDLE_PENDING: String(pending) } });
@@ -201,10 +183,8 @@ async function doctor(cfg: Config, asin: string | null, bookTitle: string | null
   }
 }
 
-type StoreT = InstanceType<typeof import("./store.js").Store>;
-
 /** The vault step; prints its summary. False when the vault could not be written. */
-async function updateVault(cfg: Config, store: StoreT, book: string | null): Promise<boolean> {
+async function updateVault(cfg: Config, store: Store, book: string | null): Promise<boolean> {
   const { runVaultStep } = await import("./vault/run.js");
   const r = runVaultStep(cfg, store, { restoreBook: book });
   console.log(JSON.stringify({ obsidian: r }));
@@ -213,20 +193,14 @@ async function updateVault(cfg: Config, store: StoreT, book: string | null): Pro
   return !r.error;
 }
 
-async function linkExisting(cfg: Config, store: StoreT, book: string | null, apply: boolean, remember: "always" | "never" | null): Promise<number> {
+async function linkExisting(cfg: Config, store: Store, book: string | null, apply: boolean, remember: "always" | "never" | null): Promise<number> {
   if (!cfg.obsidianVault) throw new Error("Set OBSIDIAN_VAULT to your vault path first.");
-  const { applyBackfill, planBackfill } = await import("./vault/backfill.js");
-  const { openVault, setLinkExistingPreference, withVaultLease } = await import("./vault/run.js");
+  const { linkExistingStep, openVault, withVaultLease } = await import("./vault/run.js");
   const open = openVault(cfg, store);
   try {
-    const out = withVaultLease(store, () => {
-      if (remember) setLinkExistingPreference(store, open.ctx.vault, remember);
-      if (apply) return { applied: applyBackfill(open.ctx, book) };
-      const { blocks, links, samples } = planBackfill(open.ctx, book);
-      return { preview: { blocks, links, samples }, next: "Run again with --apply to write these links." };
-    });
-    if (out === "busy") throw new Error("Another kindle-mcp process is writing to the vault; try again in a minute.");
-    console.log(JSON.stringify(out, null, 2));
+    const out = withVaultLease(store, () => linkExistingStep(open.ctx, book, apply, remember));
+    if (out === "busy") throw new Error("Another kindle-mcp process is writing to the vault. Try again in a minute.");
+    console.log(JSON.stringify("preview" in out ? { ...out, next: "Run again with --apply to write these links." } : out, null, 2));
     return 0;
   } finally {
     open.close();
@@ -241,19 +215,9 @@ function invokedDirectly(): boolean {
     return false;
   }
 }
-if (invokedDirectly()) {
-  main().then(
-    (code) => process.exit(code),
-    (e) => {
-      console.error(`ERROR: ${(e as Error).message}`);
-      process.exit(1);
-    },
-  );
-}
 
 /** `kindle-mcp config [set KEY VALUE | unset KEY]`: the settings file every client reads. */
 function configCommand(cfg: Config, args: string[]): number {
-  // Declared in here: main() runs while this module is still loading, before later top-level consts exist.
   const aliases: Record<string, SettingKey> = { vault: "obsidian_vault", folder: "obsidian_folder" };
   const [action, rawKey = "", ...rest] = args;
   const keys = Object.keys(SETTING_ENV) as SettingKey[];
@@ -296,4 +260,14 @@ function configCommand(cfg: Config, args: string[]): number {
   const shadowed = cfg.sources[key] === "environment" ? ` ${SETTING_ENV[key]} is set here and still wins over it.` : "";
   console.log(`Saved ${key} in ${cfg.settingsPath}.${shadowed}`);
   return 0;
+}
+
+if (invokedDirectly()) {
+  main().then(
+    (code) => process.exit(code),
+    (e) => {
+      console.error(`ERROR: ${(e as Error).message}`);
+      process.exit(1);
+    },
+  );
 }
