@@ -133,9 +133,9 @@ export function commandSpec(tag: string): CommandSpec | undefined {
   return BY_TAG.get(tag);
 }
 
-/** `@p` -> `post`; unknown tags come back unchanged (lowercased). */
+/** `@p` or ` p ` -> `post`; unknown tags come back trimmed, without the `@`, lowercased. */
 export function resolveTag(raw: string): string {
-  const t = raw.toLowerCase();
+  const t = raw.trim().replace(/^@+/, "").toLowerCase();
   return BY_ALIAS.get(t) ?? t;
 }
 
@@ -159,7 +159,7 @@ export function parseCommands(note: string | null | undefined): { commands: Comm
     let rest = line;
     for (;;) {
       const m = TAG.exec(rest);
-      if (!m || m.index === undefined) break;
+      if (!m) break;
       const tag = resolveTag(m[1]);
       const style = BY_TAG.get(tag)?.arg ?? "none";
       const before = rest.slice(0, m.index);
@@ -167,7 +167,7 @@ export function parseCommands(note: string | null | undefined): { commands: Comm
       let arg = "";
       if (style === "line") {
         const next = TAG.exec(after);
-        if (next && next.index !== undefined) {
+        if (next) {
           arg = after.slice(0, next.index).trim();
           after = after.slice(next.index);
         } else {

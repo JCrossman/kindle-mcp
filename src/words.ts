@@ -1,4 +1,8 @@
 /**
+ * Word lists and full-text query builders shared by the store, the vault index, linking and themes.
+ */
+
+/**
  * Words that never become link targets on their own. A note titled "Time" or "Inbox" would
  * otherwise link half of every highlight. Concept words people actually title notes with
  * (trust, money, power, leadership…) are deliberately absent: those notes should link.
@@ -44,3 +48,24 @@ export const FUNCTION_WORDS = new Set(
     "where how why who which there here then than too very can will just one two new go get"
   ).split(/\s+/),
 );
+
+/** Words too common to make two texts related. */
+export const STOPWORDS = new Set(
+  ("that this with from have were they their there what when which while your about into than then them these " +
+    "those been being because would could should also more most such only very just like over under after before " +
+    "does done make made many much some same other others where here every each both between through during " +
+    "people thing things think thought without within").split(" "),
+);
+
+const WORD = /[\p{L}\p{N}_]+/gu;
+
+/** A full-text query matching every word of the user's query. */
+export function ftsQuery(query: string): string {
+  return (query.match(WORD) ?? []).map((w) => `"${w}"`).join(" ");
+}
+
+/** A full-text query matching any of a text's distinctive words (longer than 3 letters, not stopwords), for "related". */
+export function relatedQuery(text: string, max = 12): string {
+  const words = (text.match(WORD) ?? []).map((w) => w.toLowerCase()).filter((w) => w.length > 3 && !STOPWORDS.has(w));
+  return [...new Set(words)].slice(0, max).map((w) => `"${w}"`).join(" OR ");
+}

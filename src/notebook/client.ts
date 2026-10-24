@@ -41,7 +41,7 @@ export interface Renewal {
 }
 
 /** A failed renewal in the reader's words. */
-export function renewalWords(r: Renewal): string {
+function renewalWords(r: Renewal): string {
   switch (r.outcome) {
     case "password": return "Amazon asked the hidden browser that renews it for your password";
     case "code": return "Amazon asked the hidden browser that renews it for a verification code";

@@ -100,8 +100,9 @@ function relink(ctx: FileContext, h: HighlightRow, block: Block, self: string): 
 /** What a yes would change, book by book. */
 export function planBackfill(ctx: FileContext, book: string | null = null): BackfillPlan {
   const plan: BackfillPlan = { blocks: 0, links: 0, files: [], samples: [] };
-  const books = book ? [ctx.store.findBook(book)].filter(Boolean) : ctx.store.listBooks(null, 100000).filter((b) => b.highlight_count);
-  for (const b of books as Array<Record<string, unknown>>) {
+  const one = book ? ctx.store.findBook(book) : null;
+  const books = book ? (one ? [one] : []) : ctx.store.listBooks(null, 100000).filter((b) => b.highlight_count);
+  for (const b of books) {
     const path = bookNotePath(ctx.store, { vault: ctx.vault, index: ctx.index }, b);
     const before = path ? ctx.vault.read(path) : null;
     if (!path || before === null) continue;
@@ -110,7 +111,7 @@ export function planBackfill(ctx: FileContext, book: string | null = null): Back
     const edits: Array<{ start: number; end: number; lines: string[] }> = [];
     let blocks = 0;
     let links = 0;
-    for (const h of ctx.store.getHighlights(b.book_id as string, 100000)) {
+    for (const h of ctx.store.getHighlights(b.book_id, 100000)) {
       const block = findBlock(lines, h.id);
       if (!block) continue;
       const next = relink(ctx, h, block, path);
@@ -121,7 +122,7 @@ export function planBackfill(ctx: FileContext, book: string | null = null): Back
       blocks++;
       links += next.links;
       if (next.links && plan.samples.length < 3) {
-        plan.samples.push({ book: b.title as string, before: old.join("\n").slice(0, 300), after: next.lines.join("\n").slice(0, 400) });
+        plan.samples.push({ book: b.title, before: old.join("\n").slice(0, 300), after: next.lines.join("\n").slice(0, 400) });
       }
     }
     if (!edits.length) continue;

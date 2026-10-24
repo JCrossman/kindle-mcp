@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync,
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
-import { normalizeFolder } from "./vault/write.js";
+import { normalizeFolder, sleepSync } from "./vault/write.js";
 
 export interface Config {
   home: string;
@@ -123,10 +123,6 @@ export function readSettingsFile(path: string): SettingsFile {
   }
 }
 
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /**
  * Runs `fn` holding `<path>.lock`, so two processes (a chat, a routine, the command line) can't
  * read the same old file and overwrite each other's change. A lock older than 10 s is stale.
@@ -198,7 +194,7 @@ export function writeSettingsFile(
 }
 
 /** The vault saved in the settings file, as a full path; null when none is. */
-export function savedVault(cfg: Config): string | null {
+function savedVault(cfg: Config): string | null {
   const v = readSettingsFile(cfg.settingsPath).obsidian_vault;
   return typeof v === "string" && v.trim() ? expand(v.trim()) : null;
 }

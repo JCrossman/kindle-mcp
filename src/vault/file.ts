@@ -12,7 +12,7 @@ import { bookNotePath, type ExportContext, whereOf } from "../obsidian.js";
 import { commandKey, type HighlightRow, type Store } from "../store.js";
 import { readFrontmatter, yamlString } from "./frontmatter.js";
 import type { IndexedNote, VaultIndex } from "./index.js";
-import { fold, linkTarget, type Linker } from "./linkify.js";
+import { fold, linkTarget, noteTitle, type Linker } from "./linkify.js";
 import { eolOf, hasBlockId, insertUnderHeading, neutralize, sanitizeName, VaultConflict, VaultError, type Vault } from "./write.js";
 
 export interface FileContext {
@@ -57,7 +57,7 @@ const oneLine = (s: string): string => s.replace(/\s+/g, " ").trim();
 const inertLine = (s: string): string => oneLine(neutralize(s));
 
 /** `kh-<highlight>-<tag>[-<4 hex of the argument>]`: stable, unique per command, valid in Obsidian. */
-export function blockIdFor(hid: string, c: Command): string {
+function blockIdFor(hid: string, c: Command): string {
   const slug = c.tag.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "cmd";
   const arg = normArg(c.arg);
   return `kh-${hid}-${slug}${arg ? `-${sha(arg).slice(0, 4)}` : ""}`;
@@ -70,8 +70,13 @@ function citation(h: HighlightRow): string {
   return where ? `${title}, ${where}` : title;
 }
 
-/** `[[<book note>#^kh-<id>|Title, Location N]]`, or plain text when the book note was deleted. */
-export function sourceLink(ctx: FileContext, h: HighlightRow, bookPath: string): string {
+/**
+ * `[[<book note>#^kh-<id>|Title, Location N]]`, the link to a highlight's block (the export writes
+ * the book note first), or plain text when the book note was deleted.
+ */
+export function highlightLink(ctx: FileContext, h: HighlightRow): string {
+  const ectx: ExportContext = { vault: ctx.vault, index: ctx.index, restore: true };
+  const bookPath = bookNotePath(ctx.store, ectx, ctx.store.findBook(h.book_id)!)!; // restore: never null
   if (!ctx.vault.exists(bookPath)) return citation(h);
   return `[[${ctx.linker.linkText(bookPath)}#^kh-${h.id}|${citation(h)}]]`;
 }
@@ -83,13 +88,6 @@ function excerpt(h: HighlightRow, max = 140): string {
   return `${LQ}${cut}${RQ}`;
 }
 
-/** The book note a highlight's block lives in (the export writes it first). */
-function bookPathFor(ctx: FileContext, h: HighlightRow): string {
-  const book = ctx.store.findBook(h.book_id);
-  const ectx: ExportContext = { vault: ctx.vault, index: ctx.index, restore: true };
-  return (book && bookNotePath(ctx.store, ectx, book)) || ctx.vault.k(`${h.title}.md`);
-}
-
 function quoteBlock(h: HighlightRow, link: string, withNote: boolean): string {
   const text = neutralize(h.text);
   const lines = oneLine(text) ? text.split(/\r\n|\r|\n/).map((l) => `> ${l}`) : [];
@@ -99,7 +97,7 @@ function quoteBlock(h: HighlightRow, link: string, withNote: boolean): string {
 }
 
 /** Old 1.0 router sinks: an entry there ending in the bare ^kh-<id> means the command was done. */
-function legacyDone(ctx: FileContext, h: HighlightRow, c: Command): string | null {
+export function legacyDone(ctx: FileContext, h: HighlightRow, c: Command): string | null {
   const inbox = ctx.vault.k("Inbox");
   const files: Record<string, string[]> = {
     todo: [`${inbox}/Todo.md`],
@@ -165,12 +163,12 @@ function matchIn(ctx: FileContext, pool: IndexedNote[], rawName: string): { path
  * The note named or aliased <name> (spaces, hyphens and underscores alike, trailing punctuation
  * ignored), if exactly one is the best match; two equally good matches are ambiguous.
  */
-export function matchNote(ctx: FileContext, rawName: string, implicit = false): { path: string } | { ambiguous: string[] } | null {
+function matchNote(ctx: FileContext, rawName: string, implicit = false): { path: string } | { ambiguous: string[] } | null {
   return matchIn(ctx, targetNotes(ctx, implicit), rawName);
 }
 
 /** The note @project <name> goes to: the note named or aliased <name>, otherwise Projects/<name>.md. */
-export function resolveProject(ctx: FileContext, rawName: string): ProjectTarget {
+function resolveProject(ctx: FileContext, rawName: string): ProjectTarget {
   const found = matchNote(ctx, rawName);
   if (found) return found;
   const name = rawName.normalize("NFC").replace(/[.,;:!?)"'\]]+$/, "").trim();
@@ -179,16 +177,23 @@ export function resolveProject(ctx: FileContext, rawName: string): ProjectTarget
   return ctx.vault.exists(path) ? { path } : { path, create: true };
 }
 
-function appendList(ctx: FileContext, path: string, heading: string, entry: string): void {
+/** Adds an entry to one of kindle-mcp's lists (made if missing), once per block id. Returns whether it wrote. */
+function appendList(ctx: FileContext, path: string, heading: string, entry: string, id: string): boolean {
+  const text = ctx.vault.read(path);
+  if (text && hasBlockId(text, id)) return false;
   // create() refuses when the file appeared meanwhile (another writer); append to it then instead of dropping the entry.
-  if (!ctx.vault.exists(path) && ctx.vault.create(path, `# ${heading}\n\n${entry}\n`)) return;
+  if (text === null && ctx.vault.create(path, `# ${heading}\n\n${entry}\n`)) return true;
   ctx.vault.append(path, entry);
+  return true;
 }
+
+/** A highlight filed into a note: the quote with its note and source, then the entry's block id. */
+const noteEntry = (h: HighlightRow, link: string, id: string): string => `${quoteBlock(h, link, true)}\n\n^${id}`;
 
 /** Adds an entry at the end of a note's `From Kindle` section (made if missing), once per block id. */
 function addUnderFromKindle(ctx: FileContext, path: string, entry: string, id: string, createWith: string | null): void {
   if (createWith !== null) {
-    const title = path.split("/").pop()!.replace(/\.md$/, "");
+    const title = noteTitle(path);
     if (ctx.vault.create(path, `---\ntags: [${createWith}]\n---\n# ${title}\n\n## From Kindle\n\n${entry}\n`)) return;
   }
   const text = ctx.vault.read(path) ?? "";
@@ -220,7 +225,7 @@ function parseLearned(tag: string, value: string | null): LearnedTag | null {
   }
 }
 
-export function learnedTag(store: Store, vault: Vault, tag: string): LearnedTag | null {
+function learnedTag(store: Store, vault: Vault, tag: string): LearnedTag | null {
   return parseLearned(tag, store.getState(tagKey(vault, tag)));
 }
 
@@ -282,7 +287,7 @@ function fit(tag: string, name: string): number | null {
 }
 
 /** What an unplaced tag may have meant: a built-in one typo away, and up to three notes it looks like. */
-export function suggestFor(ctx: FileContext, rawTag: string): Suggestion {
+function suggestFor(ctx: FileContext, rawTag: string): Suggestion {
   const tag = nameKey(rawTag);
   const out: Suggestion = {};
   if (tag.length >= 3) {
@@ -330,19 +335,14 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
     return { ...base, outcome: "found", to: legacy };
   }
   const spec = commandSpec(c.tag);
-  const bookPath = bookPathFor(ctx, h);
-  const link = sourceLink(ctx, h, bookPath);
+  const link = highlightLink(ctx, h);
   const id = blockIdFor(h.id, c);
   const quote = excerpt(h);
 
   const unrouted = (reason: string, extra: Partial<Filed> = {}): Filed => {
     const path = ctx.vault.k("Inbox/Unrouted.md");
-    const text = ctx.vault.read(path);
-    if (!text || !hasBlockId(text, id)) {
-      const line = unroutedLine(h, c, reason, quote, link, id);
-      appendList(ctx, path, "Kindle: unrouted", line);
-      ctx.store.setState(lineKey(ctx.vault, id), line);
-    }
+    const line = unroutedLine(h, c, reason, quote, link, id);
+    if (appendList(ctx, path, "Kindle: unrouted", line, id)) ctx.store.setState(lineKey(ctx.vault, id), line);
     ctx.store.recordOutput(h, c, { via: "sync", path, blockId: id });
     return { ...base, outcome: "unrouted", to: path, reason, ...extra };
   };
@@ -356,7 +356,7 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
     }
     if ("ambiguous" in target) return unrouted(ambiguousReason(c.tag, target.ambiguous), { ambiguous: target.ambiguous });
     if ("gone" in target) return unrouted(goneReason(c.tag, target.gone), { gone: target.gone });
-    addUnderFromKindle(ctx, target.path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, null);
+    addUnderFromKindle(ctx, target.path, noteEntry(h, link, id), id, null);
     ctx.store.recordOutput(h, c, { via: "sync", path: target.path, blockId: id });
     return { ...base, outcome: "filed", to: target.path };
   }
@@ -366,14 +366,10 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
   let path: string;
   if (c.tag === "todo") {
     path = ctx.vault.k("Inbox/Todo.md");
-    const text = ctx.vault.read(path);
-    if (!text || !hasBlockId(text, id)) {
-      appendList(ctx, path, "Kindle to-dos", `- [ ] ${inertLine(c.arg)} — ${quote ? `${quote} — ` : ""}${link} ^${id}`);
-    }
+    appendList(ctx, path, "Kindle to-dos", `- [ ] ${inertLine(c.arg)} — ${quote ? `${quote} — ` : ""}${link} ^${id}`, id);
   } else if (c.tag === "quote") {
     path = ctx.vault.k("Inbox/Quotes.md");
-    const text = ctx.vault.read(path);
-    if (!text || !hasBlockId(text, id)) appendList(ctx, path, "Kindle quotes", `${quoteBlock(h, link, false)}\n\n^${id}`);
+    appendList(ctx, path, "Kindle quotes", `${quoteBlock(h, link, false)}\n\n^${id}`, id);
   } else {
     const target = resolveProject(ctx, c.arg);
     if (target.ambiguous) {
@@ -381,7 +377,7 @@ export function fileCommand(ctx: FileContext, h: HighlightRow, c: Command): File
       return unrouted(reason, { ambiguous: target.ambiguous });
     }
     path = target.path!;
-    addUnderFromKindle(ctx, path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, target.create ? "kindle/project" : null);
+    addUnderFromKindle(ctx, path, noteEntry(h, link, id), id, target.create ? "kindle/project" : null);
   }
   ctx.store.recordOutput(h, c, { via: "sync", path, blockId: id });
   return { ...base, outcome: "filed", to: path };
@@ -445,7 +441,7 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
       created = ctx.vault.create(path, `---\ntags: [kindle/topic]\n---\n# ${name}\n\n## From Kindle\n`);
     }
   }
-  const title = path.split("/").pop()!.replace(/\.md$/, "");
+  const title = noteTitle(path);
   ctx.store.setState(tagKey(ctx.vault, tag), JSON.stringify({ path, title }));
 
   // Move what is waiting in Unrouted.
@@ -457,8 +453,8 @@ export function teachTag(ctx: FileContext, rawTag: string, rawNote: string | nul
     const c = h?.commands.find((x) => x.tag === tag && commandKey(x, h.note) === out.command_key);
     if (!h || !c) continue;
     const id = blockIdFor(h.id, c);
-    const link = sourceLink(ctx, h, bookPathFor(ctx, h));
-    addUnderFromKindle(ctx, path, `${quoteBlock(h, link, true)}\n\n^${id}`, id, null);
+    const link = highlightLink(ctx, h);
+    addUnderFromKindle(ctx, path, noteEntry(h, link, id), id, null);
     ctx.store.moveOutput(h.id, out.command_key, path, id);
     moved++;
     // The exact line the sync wrote. Entries from before 1.3.0 kept no copy; their only reason was the unknown one.
@@ -533,11 +529,6 @@ export function readNote(ctx: FileContext, query: string, maxChars: number): Rea
   };
 }
 
-/** Where a pending agent command was already done by the 1.0 router, if it was. */
-export function legacyAgentOutput(ctx: FileContext, h: HighlightRow, c: Command): string | null {
-  return legacyDone(ctx, h, c);
-}
-
 const FOLDERS: Record<string, string> = { post: "Posts", research: "Research" };
 const LEAD: Record<string, string> = { post: "Angle", research: "Question" };
 
@@ -595,8 +586,7 @@ export function writeAgentNote(
 ): AgentNote {
   const folder = FOLDERS[c.tag];
   if (!folder) throw new Error(`@${c.tag} is not written by the agent`);
-  const bookPath = bookPathFor(ctx, h);
-  const link = sourceLink(ctx, h, bookPath);
+  const link = highlightLink(ctx, h);
   const again = existingAgentNote(ctx, h, c.tag);
   if (again) {
     ctx.store.recordOutput(h, c, { via: "agent", path: again });
@@ -606,7 +596,7 @@ export function writeAgentNote(
   const fallback = `${h.title.slice(0, 60)} ${whereOf(h)}`.trim();
   const base = sanitizeName(input.title?.trim() || fallback) ?? sanitizeName(fallback) ?? "Kindle note";
   let path = ctx.vault.k(`${folder}/${base}.md`);
-  for (let n = 2; ctx.vault.exists(path) || ctx.linker.resolve(path.split("/").pop()!.replace(/\.md$/, "")); n++) {
+  for (let n = 2; ctx.vault.exists(path) || ctx.linker.resolve(noteTitle(path)); n++) {
     if (n > 99) throw new Error("Could not find a free note name; pass a different title.");
     path = ctx.vault.k(`${folder}/${base} ${n}.md`);
   }
@@ -622,7 +612,7 @@ export function writeAgentNote(
   const related = [...new Set((input.related ?? []).map((r) => ctx.linker.resolve(linkTarget(r))).filter((p): p is string => Boolean(p)))]
     .filter((p) => p !== path)
     .slice(0, 8);
-  const title = path.split("/").pop()!.replace(/\.md$/, "");
+  const title = noteTitle(path);
   const lead = h.note ? `**${LEAD[c.tag]}:** ${inertLine(h.note)}\n\n` : "";
   const text = [
     "---",

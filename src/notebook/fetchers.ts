@@ -24,10 +24,10 @@ const HEADERS = {
 };
 
 /** Plain HTTP with the cookies `kindle-mcp login` saved. Set-Cookie updates are written back. */
-export function cookieFetcher(cfg: Config, session: Session | null = loadSession(cfg.sessionPath)): FetcherHandle {
+function cookieFetcher(cfg: Config, session: Session | null = loadSession(cfg.sessionPath)): FetcherHandle {
   if (!session) {
     return {
-      fetch: async (url: string): Promise<FetchResult> => ({ status: 302, finalUrl: "/ap/signin", html: "" }),
+      fetch: async (): Promise<FetchResult> => ({ status: 302, finalUrl: "/ap/signin", html: "" }),
       close: async () => {},
     };
   }
@@ -140,7 +140,7 @@ export async function launchContext(
 }
 
 /** A real browser navigating to each URL. Slow, but exactly what a human session looks like. */
-export async function browserFetcher(cfg: Config, headless = true): Promise<FetcherHandle> {
+async function browserFetcher(cfg: Config, headless = true): Promise<FetcherHandle> {
   const ctx = await launchContext(cfg.browserProfile, headless, cfg.browserPath);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   return {

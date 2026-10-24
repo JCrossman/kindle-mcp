@@ -7,6 +7,7 @@ import { AuthRequired, DeadlineReached, NotebookClient, type Renewal } from "./n
 import { openFetcher, type FetcherHandle } from "./notebook/fetchers.js";
 import { refreshSession } from "./notebook/login.js";
 import { loadSession } from "./notebook/session.js";
+import type { Book, Highlight } from "./models.js";
 import { nowIso, type Store, type SyncStats } from "./store.js";
 
 export type Log = (message: string) => void;
@@ -36,6 +37,18 @@ export interface SyncResult extends SyncStats {
 const FULL_PASS = "sync:full_pass_started";
 
 const fresh = (): SyncStats => ({ books_seen: 0, books_synced: 0, highlights_new: 0, highlights_updated: 0 });
+const errorText = (e: unknown): string => String((e as Error).message ?? e).slice(0, 500);
+
+/** One book and its highlights into the store, counted. Returns the book's id. */
+function ingest(store: Store, stats: SyncStats, book: Book, highlights: Highlight[]): string {
+  const bookId = store.upsertBook(book);
+  for (const h of highlights) {
+    const result = store.upsertHighlight(bookId, h);
+    if (result === "new") stats.highlights_new++;
+    else if (result === "updated") stats.highlights_updated++;
+  }
+  return bookId;
+}
 
 /** A renewal starts only with this much of the budget left, and gets at most RENEW_MS (two browser starts and Amazon's redirects). */
 const RENEW_MIN_LEFT_MS = 15_000;
@@ -54,7 +67,7 @@ export function lastRenewal(store: Store): (Renewal & { at: string }) | null {
 }
 
 /** The sign-in error for this data folder: nothing saved yet, or saved (or unreadable) and refused. */
-export function signInNeeded(cfg: Config, renewal?: Renewal): AuthRequired {
+function signInNeeded(cfg: Config, renewal?: Renewal): AuthRequired {
   if (!existsSync(cfg.sessionPath)) return new AuthRequired("missing", { home: cfg.home });
   const session = loadSession(cfg.sessionPath);
   return new AuthRequired("expired", { savedAt: session?.signedInAt ?? session?.savedAt, ...(renewal ? { renewal } : {}) });
@@ -164,19 +177,14 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
       for (const [i, book] of todo.entries()) {
         let highlights;
         try {
-          highlights = await reader!.read((nb) => nb.annotations(book.asin!));
+          highlights = await reader.read((nb) => nb.annotations(book.asin!));
         } catch (e) {
           if (!(e instanceof DeadlineReached)) throw e;
           partial = true;
           remaining = todo.length - i;
           break;
         }
-        const bookId = store.upsertBook(book);
-        for (const h of highlights) {
-          const result = store.upsertHighlight(bookId, h);
-          if (result === "new") stats.highlights_new++;
-          else if (result === "updated") stats.highlights_updated++;
-        }
+        const bookId = ingest(store, stats, book, highlights);
         store.markBookSynced(bookId, book.lastAnnotated);
         stats.books_synced++;
         log(`  ${book.title.slice(0, 60)}: ${highlights.length} annotations`);
@@ -189,7 +197,7 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
     return { ...stats, ...(partial ? { partial, books_remaining: remaining } : {}), ...renewed() };
   } catch (e) {
     const err = e instanceof AuthRequired ? signInNeeded(cfg, reader?.renewal) : e; // a sign-in refused mid-sync too
-    store.finishRun(runId, { ...stats, error: String((err as Error).message ?? err).slice(0, 500) });
+    store.finishRun(runId, { ...stats, error: errorText(err) });
     throw err;
   } finally {
     if (reader?.renewal) store.setState(LAST_RENEWAL, JSON.stringify({ at: nowIso(), ...reader.renewal }));
@@ -202,19 +210,14 @@ export function importClippings(store: Store, path: string, log: Log = (m) => co
   try {
     for (const { book, highlights } of parseClippings(path).values()) {
       stats.books_seen++;
-      const bookId = store.upsertBook(book);
-      for (const h of highlights) {
-        const result = store.upsertHighlight(bookId, h);
-        if (result === "new") stats.highlights_new++;
-        else if (result === "updated") stats.highlights_updated++;
-      }
+      ingest(store, stats, book, highlights);
       stats.books_synced++;
     }
     store.finishRun(runId, stats);
     log(`Imported clippings: ${JSON.stringify(stats)}`);
     return stats;
   } catch (e) {
-    store.finishRun(runId, { ...stats, error: String((e as Error).message ?? e).slice(0, 500) });
+    store.finishRun(runId, { ...stats, error: errorText(e) });
     throw e;
   }
 }

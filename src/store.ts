@@ -11,8 +11,9 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-import { commandSpec, parseCommands, resolveTag, withActions, type Command, type CommandWithAction } from "./commands.js";
+import { commandSpec, parseCommands, resolveTag, type Command } from "./commands.js";
 import type { Book, Highlight } from "./models.js";
+import { ftsQuery, relatedQuery } from "./words.js";
 
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS books (
@@ -114,15 +115,18 @@ export interface HighlightRow {
   truncated: boolean;
   source: string;
   highlighted_at: string | null;
-  commands: CommandWithAction[];
+  commands: Command[];
   commands_done_at: string | null;
   amazon_id: string | null;
   position: number | null;
   first_seen: string;
   updated_at: string;
-  /** Set by pendingCommands: the commands still to do, and the ones already done. */
-  remaining?: CommandWithAction[];
-  already_done?: DoneCommand[];
+}
+
+/** A highlight with @commands left: the commands still to do, and the ones already done. */
+export interface PendingHighlight extends HighlightRow {
+  remaining: Command[];
+  already_done: DoneCommand[];
 }
 
 /** A finished command and where its output went (vault-relative path, or null when handled elsewhere). */
@@ -131,6 +135,17 @@ export interface DoneCommand {
   arg: string;
   via: string;
   path: string | null;
+}
+
+/** A row of the books table. */
+export interface BookRecord {
+  book_id: string;
+  asin: string | null;
+  title: string;
+  author: string;
+  title_key: string;
+  last_annotated: string | null;
+  last_synced: string | null;
 }
 
 export interface BookRow {
@@ -201,7 +216,7 @@ export function commandKey(c: Command, cleanNote: string): string {
 
 function rowToHighlight(r: Row): HighlightRow {
   const commands = JSON.parse(String(r.commands ?? "[]")) as Command[];
-  return { ...(r as unknown as HighlightRow), commands: withActions(commands), truncated: Boolean(r.truncated) };
+  return { ...(r as unknown as HighlightRow), commands, truncated: Boolean(r.truncated) };
 }
 
 export class Store {
@@ -236,7 +251,7 @@ export class Store {
 
   // ---- books -------------------------------------------------------------
   /** Clippings has no ASIN; attach to an existing cloud book when titles match. */
-  resolveBookId(book: Book): string {
+  private resolveBookId(book: Book): string {
     if (book.asin) return book.asin;
     const row = this.db
       .prepare("SELECT book_id FROM books WHERE title_key = ? ORDER BY asin IS NULL LIMIT 1")
@@ -380,14 +395,11 @@ export class Store {
   }
 
   /** Accepts a book_id, ASIN, or a fragment of the title. */
-  findBook(book: string): Row | null {
-    let row = this.db.prepare("SELECT * FROM books WHERE book_id=? OR asin=?").get(book, book) as Row | undefined;
-    if (!row) {
-      row = this.db
-        .prepare("SELECT * FROM books WHERE title LIKE ? ORDER BY LENGTH(title) LIMIT 1")
-        .get(`%${book}%`) as Row | undefined;
-    }
-    return row ?? null;
+  findBook(book: string): BookRecord | null {
+    const row =
+      this.db.prepare("SELECT * FROM books WHERE book_id=? OR asin=?").get(book, book) ??
+      this.db.prepare("SELECT * FROM books WHERE title LIKE ? ORDER BY LENGTH(title) LIMIT 1").get(`%${book}%`);
+    return (row as BookRecord | undefined) ?? null;
   }
 
   getHighlights(bookId: string, limit = 100, offset = 0): HighlightRow[] {
@@ -402,29 +414,19 @@ export class Store {
     return rows[0] ?? null;
   }
 
-  static ftsQuery(query: string): string {
-    const words = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
-    return words.map((w) => `"${w}"`).join(" ");
-  }
-
-  search(query: string, limit = 20, excludeId: string | null = null): HighlightRow[] {
-    const fts = Store.ftsQuery(query);
+  search(query: string, limit = 20): HighlightRow[] {
+    const fts = ftsQuery(query);
     if (!fts) return [];
-    const exclude = excludeId ? "AND h.id != ?" : "";
-    const params: Array<string | number> = excludeId ? [fts, excludeId, limit] : [fts, limit];
     return this.rows(
-      `${Store.SELECT} JOIN highlights_fts f ON f.id = h.id
-       WHERE highlights_fts MATCH ? ${exclude} ORDER BY bm25(highlights_fts) LIMIT ?`,
-      ...params,
+      `${Store.SELECT} JOIN highlights_fts f ON f.id = h.id WHERE highlights_fts MATCH ? ORDER BY bm25(highlights_fts) LIMIT ?`,
+      fts, limit,
     );
   }
 
   /** Highlights from other books that share content words with the given text, best first. */
   related(text: string, excludeId: string, excludeBookId: string, limit = 5): HighlightRow[] {
-    const words = (text.match(/[\p{L}\p{N}_]+/gu) ?? []).filter((w) => w.length > 3 && !STOPWORDS.has(w.toLowerCase()));
-    const distinct = [...new Set(words.map((w) => w.toLowerCase()))].slice(0, 12);
-    if (!distinct.length) return [];
-    const fts = distinct.map((w) => `"${w}"`).join(" OR ");
+    const fts = relatedQuery(text);
+    if (!fts) return [];
     return this.rows(
       `${Store.SELECT} JOIN highlights_fts f ON f.id = h.id
        WHERE highlights_fts MATCH ? AND h.id != ? AND h.book_id != ? ORDER BY bm25(highlights_fts) LIMIT ?`,
@@ -482,9 +484,9 @@ export class Store {
   }
 
   /** Splits a highlight's current commands into what is left and what is already done. */
-  commandStates(h: HighlightRow): { remaining: CommandWithAction[]; done: DoneCommand[] } {
+  commandStates(h: HighlightRow): { remaining: Command[]; done: DoneCommand[] } {
     const outs = this.outputs(h.id);
-    const remaining: CommandWithAction[] = [];
+    const remaining: Command[] = [];
     const done: DoneCommand[] = [];
     for (const c of h.commands) {
       const o = outs.get(commandKey(c, h.note));
@@ -495,9 +497,9 @@ export class Store {
   }
 
   /** Highlights with @commands still to do, oldest first, each carrying `remaining` and `already_done`. */
-  pendingCommands(tag: string | null = null, limit = 100): HighlightRow[] {
-    const want = tag ? resolveTag(tag.trim().replace(/^@+/, "")) : null;
-    const out: HighlightRow[] = [];
+  pendingCommands(tag: string | null = null, limit = 100): PendingHighlight[] {
+    const want = tag ? resolveTag(tag) : null;
+    const out: PendingHighlight[] = [];
     for (const h of this.rows(`${Store.SELECT} WHERE h.commands != '[]' AND h.commands_done_at IS NULL ORDER BY h.first_seen, h.id`)) {
       const { remaining, done } = this.commandStates(h);
       if (!remaining.length || (want && !remaining.some((c) => c.tag === want))) continue;
@@ -507,23 +509,23 @@ export class Store {
     return out;
   }
 
-  /** Pending highlights per tag (commands still to do), for status. */
-  pendingByTag(): Record<string, number> {
-    const counts: Record<string, number> = {};
-    for (const h of this.pendingCommands(null, Number.MAX_SAFE_INTEGER)) {
-      for (const tag of new Set(h.remaining!.map((c) => c.tag))) counts[tag] = (counts[tag] ?? 0) + 1;
-    }
-    return counts;
+  /** How many highlights have @commands left. */
+  pendingCount(): number {
+    return this.pendingCommands(null, Number.MAX_SAFE_INTEGER).length;
   }
 
-  /** Records one finished command, then marks the highlight done if nothing is left. */
-  recordOutput(h: HighlightRow, c: Command, o: { via: string; path?: string | null; blockId?: string | null }): void {
+  private insertOutput(h: HighlightRow, c: Command, via: string, path: string | null, blockId: string | null): void {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO command_outputs (highlight_id, command_key, tag, arg, via, path, block_id, at)
          VALUES (?,?,?,?,?,?,?,?)`,
       )
-      .run(h.id, commandKey(c, h.note), c.tag, c.arg, o.via, o.path ?? null, o.blockId ?? null, nowIso());
+      .run(h.id, commandKey(c, h.note), c.tag, c.arg, via, path, blockId, nowIso());
+  }
+
+  /** Records one finished command, then marks the highlight done if nothing is left. */
+  recordOutput(h: HighlightRow, c: Command, o: { via: string; path?: string | null; blockId?: string | null }): void {
+    this.insertOutput(h, c, o.via, o.path ?? null, o.blockId ?? null);
     this.refreshDone(h.id);
   }
 
@@ -544,16 +546,8 @@ export class Store {
   markCommandsDone(hid: string, tag: string | null = null): boolean {
     const h = this.getHighlight(hid);
     if (!h) return false;
-    const want = tag ? resolveTag(tag.trim().replace(/^@+/, "")) : null;
-    for (const c of h.commands) {
-      if (want && c.tag !== want) continue;
-      this.db
-        .prepare(
-          `INSERT OR IGNORE INTO command_outputs (highlight_id, command_key, tag, arg, via, path, block_id, at)
-           VALUES (?,?,?,?,'manual',NULL,NULL,?)`,
-        )
-        .run(h.id, commandKey(c, h.note), c.tag, c.arg, nowIso());
-    }
+    const want = tag ? resolveTag(tag) : null;
+    for (const c of h.commands) if (!want || c.tag === want) this.insertOutput(h, c, "manual", null, null);
     if (want) this.refreshDone(hid);
     else this.db.prepare("UPDATE highlights SET commands_done_at=? WHERE id=?").run(nowIso(), hid);
     return true;
@@ -673,20 +667,16 @@ export class Store {
   } {
     const one = (sql: string): number => Number(Object.values(this.db.prepare(sql).get() as Row)[0]);
     const last = this.db.prepare("SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1").get() as Row | undefined;
+    const pending = this.pendingCommands(null, Number.MAX_SAFE_INTEGER);
+    const byTag: Record<string, number> = {};
+    for (const h of pending) for (const tag of new Set(h.remaining.map((c) => c.tag))) byTag[tag] = (byTag[tag] ?? 0) + 1;
     return {
       books: one("SELECT COUNT(*) FROM books"),
       highlights: one("SELECT COUNT(*) FROM highlights"),
       truncated_highlights: one("SELECT COUNT(*) FROM highlights WHERE truncated=1"),
-      pending_commands: this.pendingCommands(null, Number.MAX_SAFE_INTEGER).length,
-      pending_by_tag: this.pendingByTag(),
+      pending_commands: pending.length,
+      pending_by_tag: byTag,
       last_run: last ?? null,
     };
   }
 }
-
-export const STOPWORDS = new Set(
-  ("that this with from have were they their there what when which while your about into than then them these " +
-    "those been being because would could should also more most such only very just like over under after before " +
-    "does done make made many much some same other others where here every each both between through during " +
-    "people thing things think thought without within").split(" "),
-);

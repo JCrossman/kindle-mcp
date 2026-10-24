@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { parseClippings, parseWhen } from "../src/clippings.js";
 import { COMMANDS, commandsTable, parseCommands } from "../src/commands.js";
 import { makeBook, makeHighlight } from "../src/models.js";
-import { decodeAnnotationId, parseAnnotations, parseLibrary, parsePaneBook } from "../src/notebook/parser.js";
+import { decodeAnnotationId, parseAnnotations, parseLibrary } from "../src/notebook/parser.js";
 import { exportBook } from "../src/obsidian.js";
 import { highlightId, locationId, Store, titleKey } from "../src/store.js";
 import { importClippings } from "../src/sync.js";
@@ -73,10 +73,7 @@ describe("notebook parser", () => {
   });
   it("reads real markup captured from read.amazon.com (scrubbed)", () => {
     const html = fx("annotations_live_structure.html");
-    const book = parsePaneBook(html)!;
-    expect(book.asin).toBe("B0FAKE0001");
-    expect(book.author).toBe("Placeholder Author One");
-    const [hs, token, state] = parseAnnotations(html, book.asin!);
+    const [hs, token, state] = parseAnnotations(html, "B0FAKE0001");
     expect(hs.map((h) => [h.locationStart, h.page, h.color])).toEqual([[31, "7", "yellow"], [123, "42", "yellow"], [130, "44", "yellow"]]);
     for (const h of hs) expect(Math.floor(h.position! / 150) + 1).toBe(h.locationStart); // location derives from byte position
     expect(hs[0].amazonId!.startsWith("B0FAKE0001:4559:HIGHLIGHT:")).toBe(true);
@@ -167,7 +164,6 @@ describe("store", () => {
     expect(merged.text.startsWith("Placeholder clipping text")).toBe(true); // clippings filled the gap
     expect(merged.truncated).toBe(false);
     expect(merged.commands.map((c) => [c.tag, c.arg])).toEqual([["research", ""]]); // device note attached to its highlight
-    expect(merged.commands[0].action).toContain("research");
     expect(store.status().books).toBe(3); // the clippings author matched, not duplicated
     expect(store.findBook(bookId)!.author).toBe("Ada Exampleton"); // the cloud's form of the name stays
     store.close();

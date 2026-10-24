@@ -9,9 +9,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { COMMANDS } from "../src/commands.js";
 import { loadConfig } from "../src/config.js";
 import { parseAnnotations, parseLibrary } from "../src/notebook/parser.js";
-import {
-  createServer, parseSince, routePendingPrompt, serverInstructions, UNTRUSTED_CONTENT_WARNING, weeklyBriefPrompt,
-} from "../src/server.js";
+import { routePendingPrompt, weeklyBriefPrompt } from "../src/prompts.js";
+import { createServer, parseSince, serverInstructions, UNTRUSTED_CONTENT_WARNING } from "../src/server.js";
 import { saveSession } from "../src/notebook/session.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";

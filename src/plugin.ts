@@ -3,15 +3,14 @@
  * generated from package.json and the prompts so they can't drift from the server (a test compares
  * the committed files with this). `npm run render-plugin` writes them.
  */
-import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
-import { routePendingPrompt, weeklyBriefPrompt } from "./server.js";
+import { promptText, routePendingPrompt, weeklyBriefPrompt } from "./prompts.js";
 
 const pkg = createRequire(import.meta.url)("../package.json") as { version: string; license: string; keywords: string[] };
 
-export const PLUGIN_NAME = "kindle";
-export const MARKETPLACE_NAME = "kindle-mcp";
+const PLUGIN_NAME = "kindle";
+const MARKETPLACE_NAME = "kindle-mcp";
 const REPO = "https://github.com/JCrossman/kindle-mcp";
 const AUTHOR = { name: "Jeremy Crossman", url: "https://github.com/JCrossman" };
 const DESCRIPTION =
@@ -22,8 +21,6 @@ const DESCRIPTION =
 export function bundleUrl(version = pkg.version): string {
   return `${REPO}/releases/download/v${version}/kindle-mcp-server-${version}.mcpb`;
 }
-
-export const promptText = (name: string): string => readFileSync(new URL(`./prompts/${name}.md`, import.meta.url), "utf8");
 
 /** A SKILL.md: frontmatter values are JSON-quoted, which YAML reads as plain strings. */
 function skill(front: Record<string, string | boolean>, body: string): string {

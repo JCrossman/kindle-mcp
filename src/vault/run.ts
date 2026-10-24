@@ -11,9 +11,9 @@ import type { Config } from "../config.js";
 import { exportBook } from "../obsidian.js";
 import type { Store } from "../store.js";
 import { applyBackfill, planBackfill } from "./backfill.js";
-import { fileCommand, legacyAgentOutput, type FileContext, type Suggestion } from "./file.js";
+import { fileCommand, legacyDone, type FileContext, type Suggestion } from "./file.js";
 import { VaultIndex } from "./index.js";
-import { Vault, VaultError } from "./write.js";
+import { sleepSync, Vault, VaultError } from "./write.js";
 
 export const LEASE = "vault";
 const LEASE_MS = 120_000;
@@ -54,17 +54,13 @@ export interface VaultStepOptions {
   offerLinkExisting?: boolean;
 }
 
-function sleep(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /** Runs `fn` holding the vault lease, waiting up to `waitMs` for another process to finish. */
 export function withVaultLease<T>(store: Store, fn: () => T, waitMs = 5000): T | "busy" {
   const holder = `${process.pid}:${randomUUID()}`;
   const until = Date.now() + waitMs;
   while (!store.acquireLease(LEASE, holder, LEASE_MS)) {
     if (Date.now() > until) return "busy";
-    sleep(200);
+    sleepSync(200);
   }
   try {
     return fn();
@@ -75,7 +71,6 @@ export function withVaultLease<T>(store: Store, fn: () => T, waitMs = 5000): T |
 
 export interface OpenVault {
   ctx: FileContext;
-  index: VaultIndex;
   complete: boolean;
   close(): void;
 }
@@ -91,7 +86,7 @@ export function openVault(cfg: Config, store: Store, deadline = Number.POSITIVE_
   try {
     const { complete } = index.refresh(deadline, fresh);
     const ctx: FileContext = { store, vault, index, linker: index.linker(), linkNotes: cfg.linkNotes };
-    return { ctx, index, complete, close: () => index.close() };
+    return { ctx, complete, close: () => index.close() };
   } catch (e) {
     index.close();
     throw e;
@@ -123,7 +118,18 @@ export function setLinkExistingPreference(store: Store, vault: Vault, value: "al
   store.setState(prefKey(vault), value);
 }
 
-export function askUser(blocks: number, links: number): string {
+/**
+ * kindle_link_existing_highlights and `kindle-mcp link-existing`: save the user's standing answer, then
+ * add the links or only preview them. Callers hold the vault lease.
+ */
+export function linkExistingStep(ctx: FileContext, book: string | null, apply: boolean, remember: "always" | "never" | null) {
+  if (remember) setLinkExistingPreference(ctx.store, ctx.vault, remember);
+  if (apply) return { applied: applyBackfill(ctx, book) };
+  const { blocks, links, samples } = planBackfill(ctx, book);
+  return { preview: { blocks, links, samples } };
+}
+
+function askUser(blocks: number, links: number): string {
   return (
     `Ask the user, in these words or close: "I can add ${links} link${links === 1 ? "" : "s"} to your notes inside ` +
     `${blocks} highlight${blocks === 1 ? "" : "s"} you exported earlier. Only text you haven't edited changes. Add them ` +
@@ -141,7 +147,7 @@ const quoted = (titles: string[]): string => {
  * One question about every tag this sync couldn't place, in words the agent passes on. Typos of a
  * command are fixed on the Kindle; anything else waits for the user to name a note.
  */
-export function askAboutTags(entries: VaultStepResult["unrouted"]): VaultStepResult["unknown_tags"] | undefined {
+function askAboutTags(entries: VaultStepResult["unrouted"]): VaultStepResult["unknown_tags"] | undefined {
   const byTag = new Map<string, VaultStepResult["unrouted"][number]>();
   for (const e of entries) if (!byTag.has(e.tag)) byTag.set(e.tag, e);
   if (!byTag.size) return undefined;
@@ -189,14 +195,15 @@ export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions =
   try {
     if (!open.complete) return { ...result, skipped: "indexing" };
     const { ctx } = open;
+    const restore = opts.restoreBook ? store.findBook(opts.restoreBook)?.book_id : undefined;
     const ran = withVaultLease(store, () => {
       // 1. New highlights into their book notes.
       for (const b of store.listBooks(null, 100000).filter((x) => x.highlight_count)) {
         const r = exportBook(store, b.book_id, {
           vault: ctx.vault,
-          index: open.index,
+          index: ctx.index,
           linker: cfg.linkNotes ? ctx.linker : null,
-          restore: opts.restoreBook ? store.findBook(opts.restoreBook)?.book_id === b.book_id : false,
+          restore: restore === b.book_id,
         });
         if (r.skipped === "deleted") result.deleted_book_notes.push(b.title);
         else if (r.added) {
@@ -208,10 +215,10 @@ export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions =
       // 2. Commands the sync owns; agent commands a 1.0 router already wrote up.
       const filed = new Map<string, number>();
       for (const h of store.pendingCommands(null, Number.MAX_SAFE_INTEGER)) {
-        for (const c of h.remaining!) {
+        for (const c of h.remaining) {
           const spec = commandSpec(c.tag);
           if (spec?.doneBy === "agent") {
-            const earlier = legacyAgentOutput(ctx, h, c);
+            const earlier = legacyDone(ctx, h, c);
             if (earlier) {
               store.recordOutput(h, c, { via: "sync", path: earlier });
               result.found_earlier++;

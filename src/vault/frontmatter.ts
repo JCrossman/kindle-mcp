@@ -41,7 +41,7 @@ export function splitFrontmatter(text: string): { yaml: string | null; bodyStart
 }
 
 /** A plain, single- or double-quoted YAML scalar, with a trailing ` # comment` removed. */
-export function scalar(raw: string): string {
+function scalar(raw: string): string {
   const v = raw.trim();
   if (v.startsWith('"')) {
     const end = v.lastIndexOf('"');
