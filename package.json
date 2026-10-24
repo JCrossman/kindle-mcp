@@ -37,9 +37,8 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-prompts.mjs",
     "dev": "tsx src/cli.ts",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tests/tsconfig.json",
     "render-plugin": "tsx scripts/render-plugin.ts",
-    "render-skill": "tsx scripts/render-plugin.ts",
     "mcpb": "node scripts/build-mcpb.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
     "privacy": "node scripts/privacy-check.mjs"

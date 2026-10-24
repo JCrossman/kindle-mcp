@@ -217,18 +217,27 @@ describe("the hooks", () => {
     expect(gate({ tool_name: "mcp__github__add_issue_comment", tool_input: { body: `see ${SESSION}` } }).code).toBe(2);
   });
 
-  it("git's own hooks refuse the commit, whoever makes it", () => {
+  /** A temporary repository with this guard's check, git hooks and Claude hook, and a remote to push to. */
+  const guardedRepo = () => {
     const repo = tmp();
     const run = (...args: string[]) => spawnSync("git", args, { cwd: repo, encoding: "utf8", env: env() });
     run("init", "-q", "-b", "main");
     run("config", "user.email", "t@example.com");
     run("config", "user.name", "T");
-    mkdirSync(join(repo, "scripts"));
-    for (const f of ["privacy-lib.mjs", "privacy-check.mjs"]) cpSync(join(root, "scripts", f), join(repo, "scripts", f));
+    mkdirSync(join(repo, "scripts", "hooks"), { recursive: true });
+    for (const f of ["privacy-lib.mjs", "privacy-check.mjs", "hooks/privacy-gate.mjs"]) cpSync(join(root, "scripts", f), join(repo, "scripts", f));
     cpSync(join(root, ".githooks"), join(repo, ".githooks"), { recursive: true });
     mkdirSync(join(repo, "tests", "fixtures"), { recursive: true });
     cpSync(join(root, "tests", "fixtures", "VOCABULARY.txt"), join(repo, "tests", "fixtures", "VOCABULARY.txt"));
     run("config", "core.hooksPath", ".githooks");
+    const remote = tmp();
+    spawnSync("git", ["init", "-q", "--bare", remote]);
+    run("remote", "add", "origin", remote);
+    return { repo, run };
+  };
+
+  it("git's own hooks refuse the commit, whoever makes it", () => {
+    const { repo, run } = guardedRepo();
 
     writeFileSync(join(repo, "a.md"), "placeholder text\n");
     run("add", "-A");
@@ -245,6 +254,35 @@ describe("the hooks", () => {
     run("add", "-A");
     expect(run("commit", "-qm", `see ${SESSION}`).status).not.toBe(0); // the message is checked too
     expect(run("commit", "-qm", "fine").status).toBe(0);
+  });
+
+  it("refuses a push that carries a leak, even after a later commit took it out", () => {
+    const { repo, run } = guardedRepo();
+    writeFileSync(join(repo, "a.md"), "placeholder text\n");
+    run("add", "-A");
+    run("commit", "-qm", "clean");
+    expect(run("push", "-q", "origin", "main").status).toBe(0);
+
+    // Made with the hooks off (another machine, a web edit), then taken out again: the tree is clean, the history isn't.
+    writeFileSync(join(repo, "b.md"), `about the ${TITLE}\n`);
+    run("add", "-A");
+    expect(run("-c", `core.hooksPath=${tmp()}`, "commit", "-qm", "leak").status).toBe(0);
+    writeFileSync(join(repo, "b.md"), "placeholder\n");
+    run("add", "-A");
+    expect(run("commit", "-qm", "tidy").status).toBe(0);
+
+    const pushed = run("push", "-q", "origin", "main");
+    expect(pushed.status).not.toBe(0);
+    expect(pushed.stderr).toContain("private-term");
+    expect(pushed.stderr).not.toMatch(/zebra/i);
+    // Claude's hook refuses the same push before git runs.
+    const r = spawnSync("node", [join(repo, "scripts", "hooks", "privacy-gate.mjs")], {
+      input: JSON.stringify({ tool_name: "Bash", tool_input: { command: "git push origin main" } }),
+      encoding: "utf8",
+      env: env(),
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("private-term");
   });
 });
 

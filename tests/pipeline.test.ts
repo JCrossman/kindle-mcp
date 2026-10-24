@@ -1,58 +1,40 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { loadConfig, type Config } from "../src/config.js";
-import { makeBook, makeHighlight } from "../src/models.js";
-import { Store } from "../src/store.js";
+import { loadConfig } from "../src/config.js";
+import { makeHighlight } from "../src/models.js";
 import { applyBackfill, planBackfill } from "../src/vault/backfill.js";
 import { writeAgentNote } from "../src/vault/file.js";
 import { LEASE, openVault, runVaultStep } from "../src/vault/run.js";
 import { renderHighlightV1 } from "./helpers/v1.js";
-
-interface World {
-  cfg: Config;
-  store: Store;
-  vault: string;
-  ids: Record<string, string>;
-  read(rel: string): string;
-}
+import { world, type World } from "./helpers/world.js";
 
 /** A store with one book and highlights carrying every kind of command, and a vault with a few user notes. */
-function world(extraNotes: Record<string, string> = {}): World {
-  const home = mkdtempSync(join(tmpdir(), "kindle-pipe-"));
-  const vault = join(home, "vault");
-  const notes: Record<string, string> = {
+function pipeline(extraNotes: Record<string, string> = {}): World & { ids: Record<string, string> } {
+  const notes = {
     "Concepts/Compound Interest.md": "Compound interest.",
     "People/Ada Exampleton.md": "---\naliases: [Exampleton]\n---\nAuthor.",
     "Work/Garden.md": "# Garden\n\n## From Kindle\n\n- older entry\n\n## Log\n\n- did things\n",
-    ".obsidian/app.json": "{}",
     ...extraNotes,
   };
-  for (const [rel, text] of Object.entries(notes)) {
-    mkdirSync(join(vault, rel, ".."), { recursive: true });
-    writeFileSync(join(vault, rel), text);
-  }
-  const cfg = loadConfig({ KINDLE_MCP_HOME: home, OBSIDIAN_VAULT: vault });
-  const store = new Store(cfg.dbPath);
-  const bookId = store.upsertBook(makeBook({ bookId: "B0FAKE0004", asin: "B0FAKE0004", title: "Placeholder Title, Part One", author: "Ada Exampleton" }));
-  const add = (key: string, loc: number, text: string, note: string): void => {
-    store.upsertHighlight(bookId, makeHighlight({ bookId, text, note, locationStart: loc, amazonId: `B0FAKE0004:${loc * 150}:HIGHLIGHT:${key}` }));
+  const w = world(notes, { book: { asin: "B0FAKE0004", title: "Placeholder Title, Part One", author: "Ada Exampleton" } });
+  const ids = {
+    post: w.add(1234, "@post the compound interest idea applies to habits @project garden", {
+      key: "post",
+      text: "Small steps, repeated daily, add up to more than any single leap.",
+    }),
+    todo: w.add(2001, "@todo email Sam about Exampleton @quote", { key: "todo", text: "A map is useful because it leaves most of the territory out." }),
+    odd: w.add(2500, "@later maybe @project", { key: "odd", text: "A third highlight." }),
   };
-  add("post", 1234, "Small steps, repeated daily, add up to more than any single leap.", "@post the compound interest idea applies to habits @project garden");
-  add("todo", 2001, "A map is useful because it leaves most of the territory out.", "@todo email Sam about Exampleton @quote");
-  add("odd", 2500, "A third highlight.", "@later maybe @project");
-  const ids: Record<string, string> = {};
-  for (const h of store.getHighlights(bookId, 100)) ids[{ 1234: "post", 2001: "todo", 2500: "odd" }[h.location_start!]!] = h.id;
-  return { cfg, store, vault, ids, read: (rel) => readFileSync(join(vault, rel), "utf8") };
+  return { ...w, ids };
 }
 
 const BOOK = "Kindle/Placeholder Title, Part One.md";
 
 describe("vault step", () => {
   it("writes linked book notes, files what the sync owns, and leaves the agent's work pending", () => {
-    const w = world();
+    const w = pipeline();
     const r = runVaultStep(w.cfg, w.store);
     expect(r.error).toBeUndefined();
     expect(r).toMatchObject({ books_written: 1, highlights_written: 3 });
@@ -87,7 +69,7 @@ describe("vault step", () => {
   });
 
   it("writes nothing on a second run", () => {
-    const w = world();
+    const w = pipeline();
     runVaultStep(w.cfg, w.store);
     const files = [BOOK, "Kindle/Inbox/Todo.md", "Kindle/Inbox/Quotes.md", "Kindle/Inbox/Unrouted.md", "Work/Garden.md"];
     const before = files.map((f) => w.read(f));
@@ -97,7 +79,7 @@ describe("vault step", () => {
   });
 
   it("neutralizes remote content in command files", () => {
-    const w = world();
+    const w = pipeline();
     w.store.upsertHighlight(
       "B0FAKE0004",
       makeHighlight({
@@ -118,7 +100,7 @@ describe("vault step", () => {
   });
 
   it("counts entries a 1.0 router already wrote as done", () => {
-    const w = world();
+    const w = pipeline();
     mkdirSync(join(w.vault, "Kindle", "Inbox"), { recursive: true });
     writeFileSync(join(w.vault, "Kindle/Inbox/Todo.md"), `## Placeholder Title, Part One, Location 2001\n- [ ] email Sam\n^kh-${w.ids.todo}\n`);
     const r = runVaultStep(w.cfg, w.store);
@@ -127,7 +109,7 @@ describe("vault step", () => {
   });
 
   it("follows a moved book note, leaves a deleted one deleted, and restores it on request", () => {
-    const w = world();
+    const w = pipeline();
     runVaultStep(w.cfg, w.store);
     mkdirSync(join(w.vault, "Books"));
     renameSync(join(w.vault, BOOK), join(w.vault, "Books/Moved.md"));
@@ -147,26 +129,26 @@ describe("vault step", () => {
   });
 
   it("writes nothing on a half-read index, while another process holds the vault, or without a vault", () => {
-    const w = world();
+    const w = pipeline();
     expect(runVaultStep(w.cfg, w.store, { deadline: Date.now() - 1 })).toMatchObject({ skipped: "indexing", highlights_written: 0 });
     expect(existsSync(join(w.vault, BOOK))).toBe(false);
     expect(w.store.acquireLease(LEASE, "someone else", 60_000)).toBe(true);
     const t = Date.now();
-    expect(runVaultStep(w.cfg, w.store)).toMatchObject({ skipped: "busy" });
-    expect(Date.now() - t).toBeGreaterThanOrEqual(4000);
+    expect(runVaultStep(w.cfg, w.store, { leaseWaitMs: 300 })).toMatchObject({ skipped: "busy" });
+    expect(Date.now() - t).toBeGreaterThanOrEqual(250); // it waited for the other writer before giving up
     expect(existsSync(join(w.vault, BOOK))).toBe(false);
     const missing = loadConfig({ KINDLE_MCP_HOME: w.cfg.home, OBSIDIAN_VAULT: join(w.vault, "nope") });
     expect(runVaultStep(missing, w.store).error).toMatch(/does not exist/);
-  }, 15_000);
+  });
 
   it("sends an ambiguous project to Unrouted with the candidates", () => {
-    const w = world({ "Archive2/Garden.md": "another" });
+    const w = pipeline({ "Archive2/Garden.md": "another" });
     const r = runVaultStep(w.cfg, w.store);
     expect(r.unrouted.find((u) => u.tag === "project" && u.arg === "garden")!.reason).toMatch(/matches 2 notes \(.*Garden\.md.*\)/);
   });
 
   it("does not file anything when auto-filing is off", () => {
-    const w = world();
+    const w = pipeline();
     const cfg = { ...w.cfg, autoFile: false };
     const r = runVaultStep(cfg, w.store);
     expect(r.filed).toEqual([]);
@@ -177,7 +159,7 @@ describe("vault step", () => {
 
 describe("agent notes", () => {
   it("writes the draft as its own linked note, drops invented links, and is idempotent", () => {
-    const w = world();
+    const w = pipeline();
     runVaultStep(w.cfg, w.store);
     const open = openVault(w.cfg, w.store);
     try {
@@ -210,7 +192,7 @@ describe("agent notes", () => {
 
 describe("links in highlights exported before", () => {
   it("previews, then links only unedited 1.0 blocks, keeping the user's own links", () => {
-    const w = world();
+    const w = pipeline();
     const hs = w.store.getHighlights("B0FAKE0004", 100);
     const blocks = hs.map((h) => renderHighlightV1(h));
     blocks[0] = blocks[0].replace("any single leap", "any single [[leap]]"); // the user linked a word
@@ -241,7 +223,7 @@ describe("links in highlights exported before", () => {
   });
 
   it("asks through the sync result at most once a week, and applies silently once the answer is always", () => {
-    const w = world();
+    const w = pipeline();
     const hs = w.store.getHighlights("B0FAKE0004", 100);
     mkdirSync(join(w.vault, "Kindle"), { recursive: true });
     writeFileSync(join(w.vault, BOOK), `---\nasin: B0FAKE0004\nsource: kindle\n---\n\n${hs.map(renderHighlightV1).join("\n\n")}\n`);

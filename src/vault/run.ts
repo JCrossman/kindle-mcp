@@ -52,6 +52,8 @@ export interface VaultStepOptions {
   restoreBook?: string | null;
   /** Put the existing-highlights question in the result (an MCP client can ask it; cron can't). */
   offerLinkExisting?: boolean;
+  /** How long to wait for another process to finish with the vault; default 5 s. */
+  leaseWaitMs?: number;
 }
 
 /** Runs `fn` holding the vault lease, waiting up to `waitMs` for another process to finish. */
@@ -253,7 +255,7 @@ export function runVaultStep(cfg: Config, store: Store, opts: VaultStepOptions =
           }
         }
       }
-    });
+    }, opts.leaseWaitMs);
     if (ran === "busy") return { ...result, skipped: "busy" };
     return result;
   } catch (e) {

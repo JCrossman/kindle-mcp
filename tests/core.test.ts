@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -22,7 +23,8 @@ function loadCloud(store: Store): [string, string[]] {
   return [bookId, highlights.map((h) => store.upsertHighlight(bookId, h))];
 }
 
-const tmpDb = (name: string): string => join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-test-${process.pid}-${name}-${Date.now()}.db`);
+/** A store file, for the tests that reopen one; the rest use an in-memory store. */
+const tmpDb = (name: string): string => join(tmpdir(), `kindle-core-${name}-${Date.now()}.db`);
 
 describe("commands grammar", () => {
   it("parses tags, arguments and leaves the note", () => {
@@ -144,7 +146,7 @@ describe("store", () => {
     expect(titleKey("Placeholder Teams: Organizing Sample")).toBe(titleKey("Placeholder Teams (Sampleford, Bo)"));
   });
   it("is idempotent and searchable", () => {
-    const store = new Store(tmpDb("idem"));
+    const store = new Store(":memory:");
     const [, first] = loadCloud(store);
     const [, second] = loadCloud(store);
     expect(first).toEqual(["new", "new", "new"]);
@@ -156,7 +158,7 @@ describe("store", () => {
     store.close();
   });
   it("fills a truncated cloud highlight from clippings (fullest-copy merge)", () => {
-    const store = new Store(tmpDb("merge"));
+    const store = new Store(":memory:");
     const [bookId] = loadCloud(store);
     expect(store.status().truncated_highlights).toBe(1);
     importClippings(store, join(FX, "My Clippings.txt"), quiet);
@@ -169,7 +171,7 @@ describe("store", () => {
     store.close();
   });
   it("tracks the pending-commands lifecycle", () => {
-    const store = new Store(tmpDb("pending"));
+    const store = new Store(":memory:");
     loadCloud(store);
     const pending = store.pendingCommands();
     expect(pending).toHaveLength(1);
@@ -196,7 +198,7 @@ describe("store", () => {
     store.close();
   });
   it("keeps same-location cloud highlights apart but merges a clippings copy", () => {
-    const store = new Store(tmpDb("apart"));
+    const store = new Store(":memory:");
     const bookId = store.upsertBook(makeBook({ bookId: "B1", asin: "B1", title: "T" }));
     const a = makeHighlight({ bookId: "B1", text: "first", locationStart: 10, amazonId: "B1:1500:HIGHLIGHT:a" });
     const b = makeHighlight({ bookId: "B1", text: "second", locationStart: 10, amazonId: "B1:1500:HIGHLIGHT:b" });
@@ -222,7 +224,7 @@ describe("store", () => {
     s.close();
   });
   it("returns context: neighbours, same-tag siblings and related highlights", () => {
-    const store = new Store(tmpDb("context"));
+    const store = new Store(":memory:");
     const [bookId] = loadCloud(store);
     importClippings(store, join(FX, "My Clippings.txt"), quiet);
     const target = store.getHighlights(bookId).find((h) => h.location_start === 2001)!;
@@ -240,17 +242,17 @@ describe("store", () => {
 
 describe("obsidian export", () => {
   it("is append-only", () => {
-    const store = new Store(tmpDb("obsidian"));
+    const store = new Store(":memory:");
     const [bookId] = loadCloud(store);
-    const vault = join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-vault-${process.pid}-${Date.now()}`);
+    const vault = join(tmpdir(), `kindle-core-vault-${Date.now()}`);
     expect(() => exportBook(store, bookId, vault)).toThrow(/does not exist/); // a mistyped vault grows no folders
-    require("node:fs").mkdirSync(vault);
+    mkdirSync(vault);
     const first = exportBook(store, bookId, vault);
     expect(first.added).toBe(3);
     const file = join(vault, first.file);
     const note = readFileSync(file, "utf8");
     expect(note).toContain("#kindle/project/garden");
-    require("node:fs").writeFileSync(file, note + "\nMY OWN THOUGHTS\n"); // user edits in Obsidian
+    writeFileSync(file, note + "\nMY OWN THOUGHTS\n"); // user edits in Obsidian
     importClippings(store, join(FX, "My Clippings.txt"), quiet);
     const second = exportBook(store, "placeholder title", vault); // title fragment lookup
     expect(second.added).toBe(0);
@@ -259,7 +261,7 @@ describe("obsidian export", () => {
     store.close();
   });
   it("makes remote Markdown inert before writing it to a vault", () => {
-    const store = new Store(tmpDb("obsidian-inert"));
+    const store = new Store(":memory:");
     const bookId = store.upsertBook(
       makeBook({
         bookId: "B0FAKE0099",
@@ -278,8 +280,7 @@ describe("obsidian export", () => {
         amazonId: "B0FAKE0099:1:HIGHLIGHT:placeholder",
       }),
     );
-    const vault = join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-vault-inert-${process.pid}-${Date.now()}`);
-    require("node:fs").mkdirSync(vault);
+    const vault = mkdtempSync(join(tmpdir(), "kindle-core-inert-"));
     const out = exportBook(store, bookId, vault);
     const text = readFileSync(join(vault, out.file), "utf8");
     expect(text).toContain("# &lt;script> Placeholder Title");

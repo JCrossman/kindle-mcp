@@ -1,17 +1,14 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
 
 import { COMMANDS, commandsTable } from "../src/commands.js";
 import { loadConfig, SETTING_ENV } from "../src/config.js";
 import { bundleUrl, pluginFiles } from "../src/plugin.js";
 import { promptText, routePendingPrompt } from "../src/prompts.js";
-import { createServer, SERVER_VERSION } from "../src/server.js";
+import { SERVER_VERSION } from "../src/server.js";
+import { connect } from "./helpers/mcp.js";
 
 const root = join(__dirname, "..");
 
@@ -33,10 +30,7 @@ describe("docs stay in sync with COMMANDS", () => {
   it("the developer guide names every tool the server offers and every setting it reads; no doc names a tool it lacks", async () => {
     const guide = readFileSync(join(root, "docs", "DEVELOPERS.md"), "utf8");
     const readme = readFileSync(join(root, "README.md"), "utf8");
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    await createServer(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) })).connect(serverT);
-    const client = new Client({ name: "docs", version: "0" });
-    await client.connect(clientT);
+    const client = await connect(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) }));
     const tools = (await client.listTools()).tools.map((t) => t.name);
     for (const t of tools) expect(guide).toContain(`\`${t}\``);
     // And the other way round: a renamed tool must not leave the routine prompt or a table behind.
@@ -89,10 +83,7 @@ describe("the plugin stays in sync with the server", () => {
     expect(market.plugins).toEqual([expect.objectContaining({ name: manifest.name, source: "./plugin", version: SERVER_VERSION })]);
   });
   it("skills name only tools and prompts the server has", async () => {
-    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-    await createServer(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) })).connect(serverT);
-    const client = new Client({ name: "docs", version: "0" });
-    await client.connect(clientT);
+    const client = await connect(loadConfig({ KINDLE_MCP_HOME: mkdtempSync(join(tmpdir(), "kindle-docs-")) }));
     const known = [...(await client.listTools()).tools.map((t) => t.name), ...(await client.listPrompts()).prompts.map((p) => p.name)];
     for (const [rel, content] of Object.entries(pluginFiles())) {
       if (!rel.endsWith("SKILL.md")) continue;

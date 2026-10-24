@@ -1,5 +1,3 @@
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { makeBook, makeHighlight } from "../src/models.js";
@@ -43,7 +41,7 @@ describe("themes", () => {
   });
 
   it("finds older highlights on any of a theme's words, by prefix", () => {
-    const store = new Store(join(tmpdir(), `kindle-mcp-themes-${process.pid}-${Date.now()}.db`));
+    const store = new Store(":memory:");
     try {
       const bookId = store.upsertBook(makeBook({ bookId: "B0FAKE0001", title: "Placeholder Title" }));
       store.upsertHighlight(bookId, makeHighlight({ bookId, locationStart: 1, text: "small habits compound" }));

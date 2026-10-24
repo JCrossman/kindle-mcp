@@ -3,7 +3,6 @@
  * to do. The browser renewal itself is stubbed here; tests/browser.test.ts runs the real one.
  */
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -14,38 +13,29 @@ import { windowedUserAgent } from "../src/notebook/fetchers.js";
 import { loadSession, saveSession } from "../src/notebook/session.js";
 import { Store } from "../src/store.js";
 import { lastRenewal, syncCloud } from "../src/sync.js";
-import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
-
-const FX = join(__dirname, "fixtures");
+import { fixturePage, listenLocal, sessionCookie as cookie, startFakeAmazon, type FakeAmazon, type Local } from "./helpers/fake-amazon.js";
 
 let amazon: FakeAmazon;
 /** Lists the library for any saved cookie, but serves a book's pages only to session-id=abc. */
-let picky: Server;
+let picky: Local;
 let pickyBase = "";
 beforeAll(async () => {
   amazon = await startFakeAmazon();
-  picky = createServer((req, res) => {
-    const asin = new URL(req.url ?? "/", "http://localhost").searchParams.get("asin");
+  picky = await listenLocal((req, res) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
     const cookies = req.headers.cookie ?? "";
-    if (!cookies.includes("session-id=") || (asin && !cookies.includes("session-id=abc"))) {
+    if (!cookies.includes("session-id=") || (url.searchParams.has("asin") && !cookies.includes("session-id=abc"))) {
       res.writeHead(302, { Location: "/ap/signin" }).end();
       return;
     }
-    const body = asin === "B0FAKE0004" ? readFileSync(join(FX, "annotations.html"))
-      : asin ? '<html><body><input type="hidden" class="kp-notebook-annotations-next-page-start" value=""></body></html>'
-      : readFileSync(join(FX, "library.html"));
-    res.writeHead(200, { "Content-Type": "text/html" }).end(body);
+    res.writeHead(200, { "Content-Type": "text/html" }).end(fixturePage(url));
   });
-  await new Promise<void>((r) => picky.listen(0, "127.0.0.1", r));
-  const addr = picky.address();
-  pickyBase = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
+  pickyBase = picky.base;
 });
 afterAll(async () => {
   await amazon.close();
-  await new Promise<void>((r) => picky.close(() => r()));
+  await picky.close();
 });
-
-const cookie = (value: string) => [{ name: "session-id", value, domain: "127.0.0.1", path: "/", expires: -1 }];
 
 function setup(saved: string | null, base = amazon.base): { cfg: Config; store: Store } {
   const home = mkdtempSync(join(tmpdir(), "kindle-signin-"));

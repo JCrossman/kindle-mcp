@@ -1,54 +1,11 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { loadConfig, type Config } from "../src/config.js";
-import { makeBook, makeHighlight } from "../src/models.js";
-import { Store } from "../src/store.js";
 import { learnedTags, readNote, teachTag } from "../src/vault/file.js";
 import { openVault, runVaultStep } from "../src/vault/run.js";
-
+import { world } from "./helpers/world.js";
 const UNROUTED = "Kindle/Inbox/Unrouted.md";
-
-interface World {
-  cfg: Config;
-  store: Store;
-  vault: string;
-  /** Adds a highlight with a note; returns its id. */
-  add(loc: number, note: string): string;
-  read(rel: string): string;
-  files(): string[];
-}
-
-function world(notes: Record<string, string>, env: Record<string, string> = {}): World {
-  const home = mkdtempSync(join(tmpdir(), "kindle-tags-"));
-  const vault = join(home, "vault");
-  for (const [rel, text] of Object.entries({ ".obsidian/app.json": "{}", ...notes })) {
-    mkdirSync(join(vault, rel, ".."), { recursive: true });
-    writeFileSync(join(vault, rel), text);
-  }
-  const cfg = loadConfig({ KINDLE_MCP_HOME: home, OBSIDIAN_VAULT: vault, ...env });
-  const store = new Store(cfg.dbPath);
-  const bookId = store.upsertBook(makeBook({ bookId: "B0FAKE0007", asin: "B0FAKE0007", title: "Placeholder Book", author: "A. Writer" }));
-  const add = (loc: number, note: string): string => {
-    store.upsertHighlight(bookId, makeHighlight({ bookId, text: `Highlight text at ${loc}.`, note, locationStart: loc, amazonId: `B0FAKE0007:${loc}:HIGHLIGHT:x${loc}` }));
-    return store.getHighlights(bookId, 1000).find((h) => h.location_start === loc)!.id;
-  };
-  const files = (): string[] => {
-    const out: string[] = [];
-    const walk = (dir: string): void => {
-      for (const e of readdirSync(dir, { withFileTypes: true })) {
-        if (e.name.startsWith(".")) continue;
-        if (e.isDirectory()) walk(join(dir, e.name));
-        else out.push(relative(vault, join(dir, e.name)).replace(/\\/g, "/"));
-      }
-    };
-    walk(vault);
-    return out.sort();
-  };
-  return { cfg, store, vault, add, read: (rel) => readFileSync(join(vault, rel), "utf8"), files };
-}
 
 describe("tags no command owns", () => {
   it("file into the one note named or aliased like the tag, under From Kindle", () => {
@@ -221,7 +178,7 @@ describe("reading a note", () => {
         "Private/Roadmap.md": "the excluded one",
         "Work/Hidden.md": "---\nkindle-link: false\n---\nhidden",
       },
-      { KINDLE_LINK_EXCLUDE: "Private" },
+      { env: { KINDLE_LINK_EXCLUDE: "Private" } },
     );
     const open = openVault(w.cfg, w.store);
     const byName = readNote(open.ctx, "Roadmap", 20_000);

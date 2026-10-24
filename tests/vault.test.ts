@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,15 +9,13 @@ import { Linker, type LinkableNote } from "../src/vault/linkify.js";
 import {
   hasBlockId, insertUnderHeading, neutralize, normalizeFolder, sanitizeName, Vault, VaultConflict, VaultError,
 } from "../src/vault/write.js";
+import { writeNotes } from "./helpers/world.js";
 
 const tmp = (name: string): string => mkdtempSync(join(tmpdir(), `kindle-vault-${name}-`));
 
 function vaultWith(files: Record<string, string>): string {
   const root = tmp("v");
-  for (const [rel, text] of Object.entries(files)) {
-    mkdirSync(join(root, rel, ".."), { recursive: true });
-    writeFileSync(join(root, rel), text);
-  }
+  writeNotes(root, files);
   return root;
 }
 
@@ -192,7 +190,7 @@ describe("vault index", () => {
     expect(idx.refresh(Date.now() + 10_000, true).read).toBe(0);
     writeFileSync(join(root, "A.md"), "---\naliases: [first]\n---\nalpha changed");
     utimesSync(join(root, "A.md"), new Date(), new Date(Date.now() + 5000));
-    require("node:fs").rmSync(join(root, "B.md"));
+    rmSync(join(root, "B.md"));
     expect(idx.refresh(Date.now() + 10_000, true)).toMatchObject({ read: 1, notes: 1 });
     expect(idx.notes().map((n) => [n.path, n.aliases])).toEqual([["A.md", ["first"]]]);
     idx.close();
