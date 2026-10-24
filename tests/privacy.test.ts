@@ -7,9 +7,9 @@ import { describe, expect, it } from "vitest";
 
 import { COMMANDS } from "../src/commands.js";
 // @ts-expect-error plain JS modules without types
-import { PUBLIC_TAGS, Terms, htmlText, loadTerms, scanFile, scanTree, tokens } from "../scripts/privacy-lib.mjs";
+import { GUARD_FILES, PUBLIC_TAGS, Terms, htmlText, loadTerms, scanFile, scanTree, tokens } from "../scripts/privacy-lib.mjs";
 // @ts-expect-error plain JS module without types
-import { scrub, scrubNote } from "../scripts/scrub-capture.mjs";
+import { scrub, scrubNote } from "../scripts/scrub-fixture.mjs";
 
 const root = join(__dirname, "..");
 // Invented on purpose: nothing in this file comes from anyone's library. The ASIN-shaped and session-link strings
@@ -212,6 +212,8 @@ describe("the hooks", () => {
     expect(write("tests/fixtures/new.txt", "Zebra quartz").code).toBe(2);
     expect(write("scripts/privacy-lib.mjs", "x").code).toBe(2);
     expect(write("tests/fixtures/VOCABULARY.txt", "x").code).toBe(2);
+    expect(write("tests/privacy.test.ts", "x").code).toBe(2); // the guard's own tests
+    expect(write("scripts/scrub-fixture.mjs", "x").code).toBe(2); // and the capture scrubber
     expect(write("scripts/privacy-lib.mjs", "x", { PRIVACY_GUARD_EDIT: "1" }).code).toBe(0); // the reader's own switch
     expect(gate({ tool_name: "mcp__github__create_pull_request", tool_input: { body: `reading ${TITLE}` } }).code).toBe(2);
     expect(gate({ tool_name: "mcp__github__add_issue_comment", tool_input: { body: `see ${SESSION}` } }).code).toBe(2);
@@ -328,6 +330,10 @@ describe("the capture scrubber", () => {
 });
 
 describe("the repository's own setup", () => {
+  it("locks files that exist: every entry of the guard's list matches a file in the repository", () => {
+    const files = spawnSync("git", ["ls-files"], { cwd: root, encoding: "utf8" }).stdout.split("\n").filter(Boolean);
+    for (const re of GUARD_FILES as RegExp[]) expect(files.some((f) => re.test(f)), String(re)).toBe(true);
+  });
   it("runs the check in CI and on release, and keeps the term list and captures out of git", () => {
     for (const wf of ["ci.yml", "release.yml"]) expect(readFileSync(join(root, ".github", "workflows", wf), "utf8")).toContain("node scripts/privacy-check.mjs");
     const ignore = readFileSync(join(root, ".gitignore"), "utf8");

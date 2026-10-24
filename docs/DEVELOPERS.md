@@ -276,7 +276,7 @@ The plugin's files are generated; edit `src/plugin.ts` or `src/prompts/*.md` ins
 until they're rendered again.
 
 When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, run the capture through
-`node scripts/scrub-capture.mjs doctor-….html tests/fixtures/<name>.html` (it writes nothing unless the result
+`node scripts/scrub-fixture.mjs doctor-….html tests/fixtures/<name>.html` (it writes nothing unless the result
 passes the privacy check), fix `src/notebook/selectors.ts`, add a test. Never commit `.har`, `.db`,
 `session.json` or `doctor-*.html`: they hold highlight text and session state.
 
