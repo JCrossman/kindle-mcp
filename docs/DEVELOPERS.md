@@ -290,8 +290,11 @@ vault name, no ASIN, account id or total, and no Claude session link. `scripts/p
   authors, highlights and notes in your own `kindle.db`. A finding names the file, the line and the term's number,
   never the term.
 - **Where it runs:** the git hooks in `.githooks` (turned on by `npm install`), the Claude Code hook in
-  `.claude/settings.json` (commits, pushes, file writes and GitHub posts), CI on every push and pull request, and
-  the release workflow.
+  `.claude/settings.json` (commits, pushes, file writes and GitHub posts), CI on every push and pull request (the
+  tree, plus every new commit's message and added lines), the `pr-text` workflow (a pull request's title and
+  description, each time they change), and the release workflow.
+- **Tests never touch your data:** `tests/helpers/isolate.ts` runs before every test file and drops Kindle, vault and
+  privacy settings from the environment, and gives each file a temporary home and temp folder.
 - **Claude cannot edit the guard** (`scripts/privacy-*.mjs`, `scripts/hooks`, `.githooks`, `.claude/settings.json`,
   `VOCABULARY.txt`): the hook refuses, and so does skipping the git hooks. You change it, or set
   `PRIVACY_GUARD_EDIT=1` in your own shell for a session.

@@ -180,8 +180,9 @@ export function resolveProject(ctx: FileContext, rawName: string): ProjectTarget
 }
 
 function appendList(ctx: FileContext, path: string, heading: string, entry: string): void {
-  if (!ctx.vault.exists(path)) ctx.vault.create(path, `# ${heading}\n\n${entry}\n`);
-  else ctx.vault.append(path, entry);
+  // create() refuses when the file appeared meanwhile (another writer); append to it then instead of dropping the entry.
+  if (!ctx.vault.exists(path) && ctx.vault.create(path, `# ${heading}\n\n${entry}\n`)) return;
+  ctx.vault.append(path, entry);
 }
 
 /** Adds an entry at the end of a note's `From Kindle` section (made if missing), once per block id. */

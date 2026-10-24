@@ -1,0 +1,27 @@
+# Checks a pull request's title and description with the privacy check, each time they are opened or edited. The
+# description is outside git, so the commit and tree checks in ci.yml never see it, and a squash merge can carry it
+# into main's history. The text reaches the shell only as environment variables.
+name: pr-text
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+permissions:
+  contents: read
+jobs:
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Privacy check of the title and description
+        env:
+          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n\n%s\n' "$TITLE" "$BODY" > "$RUNNER_TEMP/pull-request.md"
+          node scripts/privacy-check.mjs --message "$RUNNER_TEMP/pull-request.md"
