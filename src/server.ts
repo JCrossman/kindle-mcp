@@ -118,14 +118,24 @@ export function parseSince(since: string): string {
   return dt.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/** Where results can go: the vault, no vault (the reply), or a vault that couldn't be written this time. */
+type VaultState = "ready" | "none" | "broken";
+
 /**
  * What the agent should do about pending commands, in words it will follow. The user's setting
  * decides act or offer; the vault decides where results go.
  */
-export function pendingInstruction(act: boolean, vault: boolean, more: boolean): string {
-  const save = vault
-    ? "save each result with kindle_complete_command (it writes the note into the vault and marks the command done)"
-    : "no Obsidian vault is set, so put each result in your reply (or use your own notes or task tools), then call kindle_mark_command_done for the highlight";
+export function pendingInstruction(act: boolean, vault: VaultState, more: boolean): string {
+  if (vault === "broken") {
+    return (
+      "The Obsidian vault is set but couldn't be written this time (see obsidian.error), so don't carry out these " +
+      "@commands now and don't mark them done: tell the user what went wrong. They stay pending for the next sync."
+    );
+  }
+  const save =
+    vault === "ready"
+      ? "save each result with kindle_complete_command (it writes the note into the vault and marks the command done)"
+      : "no Obsidian vault is set, so put each result in your reply (or use your own notes or task tools), then call kindle_mark_command_done for the highlight";
   const rest = more ? " Start with these; kindle_get_pending_commands lists the rest." : "";
   if (!act) {
     return (
@@ -143,7 +153,7 @@ export function pendingInstruction(act: boolean, vault: boolean, more: boolean):
 }
 
 /** The pending part of a sync result: highlights with commands left, short, with the actions once per tag. */
-function pendingSummary(cfg: Config, store: Store, vault: boolean): Json {
+function pendingSummary(cfg: Config, store: Store, vault: VaultState): Json {
   const all = store.pendingCommands(null, Number.MAX_SAFE_INTEGER);
   if (!all.length) return { count: 0 };
   const tags = [...new Set(all.flatMap((h) => h.remaining!.map((c) => c.tag)))];
@@ -158,7 +168,7 @@ function pendingSummary(cfg: Config, store: Store, vault: boolean): Json {
   });
   return {
     count: all.length,
-    act_now: cfg.actOnCommands,
+    act_now: cfg.actOnCommands && vault !== "broken",
     content_boundary: UNTRUSTED_CONTENT_WARNING,
     instruction: pendingInstruction(cfg.actOnCommands, vault, all.length > PENDING_IN_SYNC),
     actions: Object.fromEntries(tags.map((t) => [t, commandSpec(t)?.action ?? UNKNOWN_ACTION])),
@@ -820,18 +830,18 @@ export function createServer(cfg: Config): McpServer {
           const left = stats.books_remaining ? ` the remaining ${stats.books_remaining} book(s)` : " the rest";
           payload.next = `Out of time for this call: call kindle_sync again to fetch${left}.`;
         }
-        let vaultReady = false;
+        let vault: VaultState = "none";
         if (cfg.obsidianVault) {
           const { runVaultStep } = await import("./vault/run.js");
           const { link_existing, unknown_tags, ...obsidian } = runVaultStep(cfg, store, { deadline: deadline + VAULT_GRACE_MS, offerLinkExisting: true });
           payload.obsidian = obsidian;
-          vaultReady = !obsidian.error;
+          vault = obsidian.error ? "broken" : "ready";
           if (link_existing) payload.link_existing = link_existing;
           if (unknown_tags) payload.unknown_tags = unknown_tags;
           const mismatch = vaultMismatch(cfg);
           if (mismatch) payload.vault_mismatch = mismatch;
         }
-        payload.pending = pendingSummary(cfg, store, vaultReady);
+        payload.pending = pendingSummary(cfg, store, vault);
         if (signIn) return fail(signIn, { needs_human: true, next: SIGN_IN_NEXT, ...payload });
         return reply(payload);
       }),

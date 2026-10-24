@@ -234,6 +234,16 @@ describe("MCP server", () => {
     expect(res.pending.instruction).toContain("kindle_mark_command_done");
   });
 
+  it("leaves the commands pending, and says why, when the vault is set but can't be written", async () => {
+    const { client, home } = await connected({ OBSIDIAN_VAULT: join(tmpdir(), "no-such-vault") });
+    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    const res = (await call(client, "kindle_sync")).data;
+    expect(res.obsidian.error).toBeTruthy();
+    expect(res.pending.act_now).toBe(false);
+    expect(res.pending.instruction).toContain("couldn't be written");
+    expect(res.pending.instruction).not.toContain("kindle_mark_command_done");
+  });
+
   it("returns a partial sync when out of time, keeps the result small, and continues on the next call", async () => {
     let { client, home } = await connected({ KINDLE_SYNC_BUDGET_MS: "1" });
     saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });

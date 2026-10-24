@@ -8,7 +8,9 @@ example, not copied from a live capture "just to get the shape", not once. Inven
 use the words in `tests/fixtures/VOCABULARY.txt`. This repository has been rebuilt more than once because of it.
 
 It is enforced, not asked: `scripts/privacy-check.mjs` runs in the Claude Code hook (`.claude/settings.json`), in the
-git hooks (`.githooks`), in CI on every push and in the release workflow. When it blocks you, that is the answer:
+git hooks (`.githooks`), in CI on every push (the tree and every new commit), on every pull request's title and
+description (`pr-text`), and in the release workflow. Tests run isolated (`tests/helpers/isolate.ts`): no test reads
+the developer's settings, home folder or store. When it blocks you, that is the answer:
 change the text. Do not add a word to `VOCABULARY.txt`, edit the guard (`scripts/privacy-*.mjs`, `scripts/hooks`,
 `.githooks`, `.claude/settings.json`), use `--no-verify`, or look for another route. If a finding looks wrong, ask the
 reader. After creating or editing a PR, read its body back: the GitHub tool can append a session link; strip it.
