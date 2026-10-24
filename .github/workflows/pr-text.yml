@@ -1,9 +1,11 @@
 # Checks a pull request's title and description with the privacy check, each time they are opened or edited. The
 # description is outside git, so the commit and tree checks in ci.yml never see it, and a squash merge can carry it
-# into main's history. The text reaches the shell only as environment variables.
+# into main's history. pull_request_target, so a pull request from a fork gets the PRIVATE_TERMS secret too: the
+# checkout is the base branch's own code, nothing from the pull request runs, and its text reaches the shell only as
+# environment variables.
 name: pr-text
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, edited, reopened, synchronize]
 permissions:
   contents: read

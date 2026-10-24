@@ -168,7 +168,7 @@ function pendingSummary(cfg: Config, store: Store, vault: VaultState): Json {
   });
   return {
     count: all.length,
-    act_now: cfg.actOnCommands,
+    act_now: cfg.actOnCommands && vault !== "broken",
     content_boundary: UNTRUSTED_CONTENT_WARNING,
     instruction: pendingInstruction(cfg.actOnCommands, vault, all.length > PENDING_IN_SYNC),
     actions: Object.fromEntries(tags.map((t) => [t, commandSpec(t)?.action ?? UNKNOWN_ACTION])),

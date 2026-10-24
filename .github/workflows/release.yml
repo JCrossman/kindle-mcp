@@ -4,7 +4,8 @@
 #   - run it from the Actions tab (workflow_dispatch), typing the version in package.json to confirm; the
 #     release then creates the v<version> tag at the checked-out commit.
 # Either way the version released is the one in package.json on the checked-out commit, a version that already
-# has a release is refused, and the bundle is built and self-tested before the tag or the release exists.
+# has a release is refused (on a manual run, so is one that is already a tag), and the bundle is built and
+# self-tested before the tag or the release exists.
 # The checkout keeps no credentials and dependencies install without running their scripts; the token is handed
 # only to the two steps that talk to GitHub. Inputs reach the shell as environment variables, never as code.
 name: release
@@ -54,13 +55,20 @@ jobs:
           TYPED: ${{ inputs.version }}
           VERSION: ${{ steps.pkg.outputs.version }}
         run: test "$TYPED" = "$VERSION"
-      - name: Refuse a version that already has a release
+      - name: Refuse a version that already has a release (or, on a manual run, a tag)
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.pkg.outputs.version }}
         run: |
           if gh release view "v$VERSION" >/dev/null 2>&1; then
             echo "v$VERSION already has a release"; exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            # --target only places a new tag: an existing one would get this commit's bundle. A failed lookup stops here.
+            tags=$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$VERSION" --jq '.[].ref')
+            if printf '%s\n' "$tags" | grep -qx "refs/tags/v$VERSION"; then
+              echo "v$VERSION is already a tag: push that tag to release it, or raise the version"; exit 1
+            fi
           fi
       - name: Build and self-test the Claude Desktop bundle (before anything is tagged or released)
         run: node scripts/build-mcpb.mjs
