@@ -3,7 +3,7 @@
 // the packed file itself: unpack it and replay a host handshake against its entry point, with and
 // without the host repeating the script path. Any failure fails the build.
 //   npm run build && node scripts/build-mcpb.mjs        -> kindle-mcp-server-<version>.mcpb
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,11 +11,13 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
+import { handshake } from "./mcp-handshake.mjs";
+
 const root = fileURLToPath(new URL("..", import.meta.url));
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 if (!existsSync(join(root, "dist/cli.js"))) throw new Error("run `npm run build` first");
 const { createServer } = await import(join(root, "dist/server.js"));
-const { loadConfig } = await import(join(root, "dist/config.js"));
+const { loadConfig, SETTING_ENV } = await import(join(root, "dist/config.js"));
 
 // Ask the server itself what it offers, so the manifest cannot drift from the code.
 const [clientT, serverT] = InMemoryTransport.createLinkedPair();
@@ -57,15 +59,10 @@ const manifest = {
     mcp_config: {
       command: "node",
       args: ["${__dirname}/dist/mcpb-entry.js"],
+      // The data folder, then every setting the server reads, each from its own option below.
       env: {
         KINDLE_MCP_HOME: "${user_config.kindle_home}",
-        OBSIDIAN_VAULT: "${user_config.obsidian_vault}",
-        OBSIDIAN_FOLDER: "${user_config.obsidian_folder}",
-        KINDLE_BROWSER_PATH: "${user_config.browser_path}",
-        KINDLE_ACT_ON_COMMANDS: "${user_config.act_on_commands}",
-        KINDLE_AUTO_FILE: "${user_config.auto_file}",
-        KINDLE_LINK_NOTES: "${user_config.link_notes}",
-        KINDLE_LINK_EXCLUDE: "${user_config.link_exclude}",
+        ...Object.fromEntries(Object.entries(SETTING_ENV).map(([key, name]) => [name, `\${user_config.${key}}`])),
       },
     },
   },
@@ -143,6 +140,9 @@ const manifest = {
 // Cowork (which runs a plugin's bundle without asking for values) skips a server whose options lack a default.
 const noDefault = Object.entries(manifest.user_config).filter(([, o]) => o.default === undefined).map(([k]) => k);
 if (noDefault.length) throw new Error(`user_config options without a default: ${noDefault.join(", ")}`);
+// A setting with no option here could not be set from the extension at all.
+const noOption = Object.keys(SETTING_ENV).filter((k) => !manifest.user_config[k]);
+if (noOption.length) throw new Error(`settings without a user_config option: ${noOption.join(", ")}`);
 
 const stage = join(root, "build", "mcpb");
 rmSync(stage, { recursive: true, force: true });
@@ -157,44 +157,6 @@ execFileSync(mcpb, ["validate", join(stage, "manifest.json")], { stdio: "inherit
 const out = join(root, `${pkg.name}-${pkg.version}.mcpb`);
 rmSync(out, { force: true });
 execFileSync(mcpb, ["pack", stage, out], { stdio: "inherit" });
-
-/** Speak MCP over stdio to a spawned server the way Claude Desktop does: discover probe first, then initialize. */
-function handshake(command, args, env) {
-  return new Promise((resolve) => {
-    const p = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"], env });
-    const got = {};
-    let out = "", err = "", exit = null;
-    const finish = () => {
-      try { p.kill(); } catch {}
-      resolve({
-        discover: got[1] ? (got[1].error ? `error ${got[1].error.code}` : "ok") : null,
-        server: got[2]?.result?.serverInfo ?? null,
-        tools: got[3]?.result?.tools?.length ?? 0,
-        prompts: got[4]?.result?.prompts?.length ?? 0,
-        exit,
-        stderr: err.split("\n").filter((l) => l.trim() && !/ExperimentalWarning|trace-warnings/.test(l)).slice(0, 3),
-      });
-    };
-    const timer = setTimeout(finish, 20000);
-    p.stdout.on("data", (d) => {
-      out += d;
-      const lines = out.split("\n");
-      out = lines.pop();
-      for (const line of lines) {
-        try { const m = JSON.parse(line); if (m.id !== undefined) got[m.id] = m; } catch { err += `non-JSON on stdout: ${line.slice(0, 80)}\n`; }
-      }
-      if (got[3] && got[4]) { clearTimeout(timer); finish(); }
-    });
-    p.stderr.on("data", (d) => (err += d));
-    p.on("exit", (code) => { exit = code; clearTimeout(timer); setTimeout(finish, 50); });
-    const send = (o) => { try { p.stdin.write(JSON.stringify(o) + "\n"); } catch {} };
-    send({ jsonrpc: "2.0", id: 1, method: "server/discover", params: {} });
-    send({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "mcpb-verify", version: "0" } } });
-    send({ jsonrpc: "2.0", method: "notifications/initialized" });
-    send({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
-    send({ jsonrpc: "2.0", id: 4, method: "prompts/list", params: {} });
-  });
-}
 
 const verify = join(root, "build", "mcpb-verify");
 rmSync(verify, { recursive: true, force: true });

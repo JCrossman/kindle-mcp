@@ -1,9 +1,9 @@
 /**
  * The browser paths end to end: headless login against a local stand-in for Amazon, a `--browser`
  * sync through the same browser, and a stale sign-in renewed from the saved profile. Skipped when
- * no Chromium-based browser can launch (set KINDLE_BROWSER_PATH, or install Chrome/Edge).
+ * no Chromium-based browser can launch (set KINDLE_BROWSER_PATH, or install Chrome/Edge), except in
+ * CI: its runners have Chrome, and these are the only end-to-end sign-in tests.
  */
-import { createServer as createHttpServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,8 +16,7 @@ import { login, refreshSession, showSignedIn } from "../src/notebook/login.js";
 import { loadSession } from "../src/notebook/session.js";
 import { Store } from "../src/store.js";
 import { lastRenewal, syncCloud } from "../src/sync.js";
-
-const FX = join(__dirname, "fixtures");
+import { fixturePage, listenLocal, type Local } from "./helpers/fake-amazon.js";
 
 async function browserAvailable(): Promise<boolean> {
   const dir = mkdtempSync(join(tmpdir(), "kindle-probe-"));
@@ -30,23 +29,18 @@ async function browserAvailable(): Promise<boolean> {
   }
 }
 const available = await browserAvailable();
+if (process.env.CI && !available) throw new Error("No Chromium-based browser could launch in CI; set KINDLE_BROWSER_PATH.");
 
-let server: Server;
+let server: Local;
 let base = "";
 beforeAll(async () => {
-  server = createHttpServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const asin = url.searchParams.get("asin");
-    const body = asin === "B0FAKE0004" ? readFileSync(join(FX, "annotations.html"))
-      : asin ? '<html><body><input type="hidden" class="kp-notebook-annotations-next-page-start" value=""></body></html>'
-      : readFileSync(join(FX, "library.html"));
-    res.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "session-id=from-browser; Path=/" }).end(body);
+  server = await listenLocal((req, res) => {
+    const page = fixturePage(new URL(req.url ?? "/", "http://localhost"));
+    res.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "session-id=from-browser; Path=/" }).end(page);
   });
-  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
-  const addr = server.address();
-  base = `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`;
+  base = server.base;
 });
-afterAll(() => new Promise<void>((r) => server.close(() => r())));
+afterAll(() => server.close());
 
 describe.skipIf(!available)("browser paths", () => {
   it("login (headless here) waits for the library and saves the session cookies", async () => {
@@ -79,7 +73,7 @@ async function startSignInAmazon() {
     valid: "t1", remembered: true, userSignsIn: true, captcha: false, stuck: false, hiddenDecoys: false,
     keptSignedIn: null as boolean | null, notebookAgents: [] as string[], signInAgents: [] as string[],
   };
-  const srv = createHttpServer((req, res) => {
+  const local = await listenLocal((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const cookies = req.headers.cookie ?? "";
     const agent = req.headers["user-agent"] ?? "";
@@ -118,19 +112,9 @@ async function startSignInAmazon() {
       return;
     }
     state.notebookAgents.push(agent);
-    const asin = url.searchParams.get("asin");
-    const body = asin === "B0FAKE0004" ? readFileSync(join(FX, "annotations.html"))
-      : asin ? '<html><body><input type="hidden" class="kp-notebook-annotations-next-page-start" value=""></body></html>'
-      : readFileSync(join(FX, "library.html"));
-    res.writeHead(200, { "Content-Type": "text/html" }).end(body);
+    res.writeHead(200, { "Content-Type": "text/html" }).end(fixturePage(url));
   });
-  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
-  const addr = srv.address();
-  return {
-    state,
-    base: `http://127.0.0.1:${typeof addr === "object" && addr ? addr.port : 0}`,
-    close: () => new Promise<void>((r) => srv.close(() => r())),
-  };
+  return { state, ...local };
 }
 
 describe.skipIf(!available)("renewing a stale sign-in", () => {

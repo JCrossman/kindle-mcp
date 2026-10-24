@@ -3,28 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { COMMANDS } from "../src/commands.js";
-import { loadConfig } from "../src/config.js";
+import { loadConfig, type Config } from "../src/config.js";
 import { parseAnnotations, parseLibrary } from "../src/notebook/parser.js";
 import { routePendingPrompt, weeklyBriefPrompt } from "../src/prompts.js";
-import { createServer, parseSince, serverInstructions, UNTRUSTED_CONTENT_WARNING } from "../src/server.js";
-import { saveSession } from "../src/notebook/session.js";
+import { parseSince, serverInstructions, UNTRUSTED_CONTENT_WARNING } from "../src/server.js";
 import { makeHighlight } from "../src/models.js";
 import { Store } from "../src/store.js";
 import { importClippings } from "../src/sync.js";
-import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
+import { saveSignedIn, startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
+import { connect, TOOLS } from "./helpers/mcp.js";
 
 const FX = join(__dirname, "fixtures");
-
-export const TOOLS = [
-  "kindle_list_books", "kindle_get_highlights", "kindle_search_highlights", "kindle_get_new_since",
-  "kindle_get_pending_commands", "kindle_get_command_context", "kindle_complete_command", "kindle_mark_command_done",
-  "kindle_search_vault", "kindle_link_existing_highlights", "kindle_export_to_obsidian", "kindle_sync",
-  "kindle_status", "kindle_set_vault", "kindle_login", "kindle_read_note", "kindle_teach_tag", "kindle_get_themes",
-];
 
 let amazon: FakeAmazon;
 beforeAll(async () => {
@@ -54,16 +47,10 @@ async function connected(env: Record<string, string> = {}, vault = true, reuse?:
   return link(cfg, home);
 }
 
-async function link(cfg: ReturnType<typeof loadConfig>, home: string): Promise<{ client: Client; home: string }> {
-  const [clientT, serverT] = InMemoryTransport.createLinkedPair();
-  await createServer(cfg).connect(serverT);
-  const client = new Client({ name: "test", version: "0" });
-  await client.connect(clientT);
-  return { client, home };
-}
+const link = async (cfg: Config, home: string): Promise<{ client: Client; home: string }> => ({ client: await connect(cfg), home });
 
 const call = async (client: Client, name: string, args: Record<string, unknown> = {}) => {
-  const res = await client.callTool({ name, arguments: args });
+  const res = (await client.callTool({ name, arguments: args })) as CallToolResult;
   return { ...res, data: res.structuredContent as Record<string, any> };
 };
 
@@ -206,7 +193,7 @@ describe("MCP server", () => {
 
   it("syncs, updates the vault, and hands over what is left with an instruction", async () => {
     const { client, home } = await connected();
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     const res = (await call(client, "kindle_sync")).data;
     expect(res.partial).toBeUndefined();
     expect(res.obsidian.filed).toEqual([{ tag: "project", to: "Kindle/Projects/garden.md", count: 1 }]);
@@ -220,13 +207,13 @@ describe("MCP server", () => {
 
   it("offers instead of acting when the setting says so, and without a vault lists everything", async () => {
     let { client, home } = await connected({ KINDLE_ACT_ON_COMMANDS: "false" });
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     let res = (await call(client, "kindle_sync")).data;
     expect(res.pending.act_now).toBe(false);
     expect(res.pending.instruction).toMatch(/^List these @commands for the user and offer/);
 
     ({ client, home } = await connected({}, false));
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     res = (await call(client, "kindle_sync")).data;
     expect(res.obsidian).toBeUndefined();
     expect(res.pending.highlights[0].commands.map((c: any) => c.tag)).toEqual(["post", "project"]);
@@ -235,7 +222,7 @@ describe("MCP server", () => {
 
   it("leaves the commands pending, and says why, when the vault is set but can't be written", async () => {
     const { client, home } = await connected({ OBSIDIAN_VAULT: join(tmpdir(), "no-such-vault") });
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     const res = (await call(client, "kindle_sync")).data;
     expect(res.obsidian.error).toBeTruthy();
     expect(res.pending.act_now).toBe(false);
@@ -259,7 +246,7 @@ describe("MCP server", () => {
 
   it("returns a partial sync when out of time, keeps the result small, and continues on the next call", async () => {
     let { client, home } = await connected({ KINDLE_SYNC_BUDGET_MS: "1" });
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     const store = new Store(join(home, "kindle.db"));
     for (let i = 0; i < 60; i++) {
       store.upsertHighlight("B0FAKE0004", makeHighlight({ bookId: "B0FAKE0004", text: "long ".repeat(400), note: "@research why", locationStart: 5000 + i, amazonId: `B0FAKE0004:${i}:HIGHLIGHT:x${i}` }));
@@ -295,11 +282,7 @@ describe("MCP server", () => {
     expect(status.next_step).toMatch(/not in a scheduled run/);
 
     // Saved but refused, and no browser profile to renew it from.
-    saveSession(join(home, "session.json"), {
-      savedAt: "2026-09-21T08:00:00.000Z",
-      signedInAt: "2026-09-19T08:00:00.000Z",
-      cookies: [{ name: "session-id", value: "stale", domain: "127.0.0.1", path: "/", expires: -1 }],
-    });
+    saveSignedIn(join(home, "session.json"), "stale", { savedAt: "2026-09-21T08:00:00.000Z", signedInAt: "2026-09-19T08:00:00.000Z" });
     res = await call(client, "kindle_sync");
     expect(res.data.error).toMatch(/^Amazon wants you to sign in again \(the saved sign-in is from 2026-09-1[89] /);
     expect(res.data.error).toContain('leave "Keep me signed in" ticked');
@@ -391,7 +374,7 @@ describe("MCP server", () => {
     expect(next).toMatch(/offer kindle_login/);
     expect(next).toMatch(/call kindle_status again/);
 
-    saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(join(home, "session.json"));
     next = (await call(client, "kindle_status")).data.next_step;
     expect(next).toMatch(/whether they keep notes in Obsidian/);
     expect(next).toMatch(/kindle_set_vault/);

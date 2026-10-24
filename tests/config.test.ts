@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { loadConfig, readSettingsFile, seedSharedVault, vaultMismatch, vaultProblem, writeSettingsFile } from "../src/config.js";
 
-// A developer's own ~/.kindle-mcp/config.json must not leak into these tests.
+// Each test gets its own home, so one test's settings file never reaches the next.
 beforeEach(() => {
   vi.stubEnv("HOME", mkdtempSync(join(tmpdir(), "kindle-home-")));
 });

@@ -1,15 +1,17 @@
-import { DatabaseSync } from "node:sqlite";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 
 import { actionsTable, COMMANDS, commandsTable } from "../src/commands.js";
 import { makeBook, makeHighlight } from "../src/models.js";
 import { commandKey, Store } from "../src/store.js";
 
-const tmpDb = (name: string): string => join(process.env.VITEST_TMP ?? "/tmp", `kindle-mcp-life-${process.pid}-${name}-${Date.now()}.db`);
+/** A store file, for the tests that open one twice; the rest use an in-memory store. */
+const tmpDb = (name: string): string => join(tmpdir(), `kindle-life-${name}-${Date.now()}.db`);
 
 function withNote(note: string): { store: Store; bookId: string; put: (n: string) => string; id: string } {
-  const store = new Store(tmpDb("note"));
+  const store = new Store(":memory:");
   const bookId = store.upsertBook(makeBook({ bookId: "B1", asin: "B1", title: "T" }));
   const base = makeHighlight({ bookId: "B1", text: "some text", locationStart: 10, amazonId: "B1:1500:HIGHLIGHT:a", note });
   store.upsertHighlight(bookId, base);
@@ -136,7 +138,7 @@ describe("shared state", () => {
   });
 
   it("stores settings and exported book notes", () => {
-    const store = new Store(tmpDb("state"));
+    const store = new Store(":memory:");
     expect(store.getState("k")).toBeNull();
     store.setState("k", "v1");
     store.setState("k", "v2");

@@ -34,6 +34,7 @@ everything else (other installs, tools, settings, how the notebook is read, buil
 
 ## Setup
     npm install && npm test          # vitest; fixtures hold placeholder text only
+    npm run typecheck                # src, tests and scripts
     npm run build && node dist/cli.js --help
 
 ## Layout (TypeScript, Node >= 22.13, ESM)

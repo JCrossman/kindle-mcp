@@ -6,35 +6,24 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { main } from "../src/cli.js";
 import { loadConfig } from "../src/config.js";
-import { saveSession } from "../src/notebook/session.js";
 import { Store } from "../src/store.js";
-import { startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
+import { saveSignedIn, startFakeAmazon, type FakeAmazon } from "./helpers/fake-amazon.js";
 
 const FX = join(__dirname, "fixtures");
 
 let amazon: FakeAmazon;
-let base = "";
-const seenCookies: string[] = [];
-let redirects = 0;
-
 beforeAll(async () => {
   amazon = await startFakeAmazon();
-  base = amazon.base;
 });
 afterAll(() => amazon.close());
-const sync = (): void => {
-  seenCookies.splice(0, seenCookies.length, ...amazon.seenCookies);
-  redirects = amazon.redirects;
-};
 
 function freshHome(): string {
   const home = mkdtempSync(join(tmpdir(), "kindle-cli-"));
   vi.stubEnv("KINDLE_MCP_HOME", home);
-  vi.stubEnv("KINDLE_NOTEBOOK_BASE", base);
+  vi.stubEnv("KINDLE_NOTEBOOK_BASE", amazon.base);
   vi.stubEnv("KINDLE_REQUEST_DELAY", "0");
   mkdirSync(join(home, "vault"));
   vi.stubEnv("OBSIDIAN_VAULT", join(home, "vault"));
-  vi.stubEnv("KINDLE_ON_PENDING", "");
   return home;
 }
 
@@ -44,14 +33,13 @@ describe("kindle-mcp CLI", () => {
   it("syncs over plain HTTP with saved cookies, then runs the --on-pending hook", async () => {
     const home = freshHome();
     const cfg = loadConfig();
-    saveSession(cfg.sessionPath, { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(cfg.sessionPath);
     const out = join(home, "hook.txt");
 
     expect(await main(["sync", "--export", "--on-pending", hook(out)])).toBe(0);
-    sync();
     expect(readFileSync(out, "utf8")).toBe("1"); // one highlight carries @post @project; @project was filed, @post is left
-    expect(seenCookies.at(-1)).toContain("session-id=abc");
-    expect(redirects).toBeGreaterThan(0); // benign redirects are followed, not reported as sign-in
+    expect(amazon.seenCookies.at(-1)).toContain("session-id=abc");
+    expect(amazon.redirects).toBeGreaterThan(0); // benign redirects are followed, not reported as sign-in
     expect(existsSync(join(home, "vault", "Kindle", "Placeholder Title, Part One.md"))).toBe(true);
     const session = JSON.parse(readFileSync(cfg.sessionPath, "utf8"));
     expect(session.cookies.some((c: { name: string; value: string }) => c.name === "session-token" && c.value === "rotated")).toBe(true); // Set-Cookie written back
@@ -78,7 +66,7 @@ describe("kindle-mcp CLI", () => {
     freshHome();
     expect(await main(["sync"])).toBe(1); // no session.json at all
     const cfg = loadConfig();
-    saveSession(cfg.sessionPath, { savedAt: "t", cookies: [{ name: "session-id", value: "wrong", domain: "127.0.0.1", path: "/", expires: -1 }] });
+    saveSignedIn(cfg.sessionPath, "wrong");
     expect(await main(["sync"])).toBe(1);
     const store = new Store(cfg.dbPath);
     expect(store.status().last_run?.error).toMatch(/kindle-mcp login/);

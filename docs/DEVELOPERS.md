@@ -262,7 +262,9 @@ keep working.
 
 ```bash
 npm install
-npm test                        # vitest; fixtures hold placeholder text only
+npm test                        # vitest; fixtures hold placeholder text only. The real-browser tests need
+                                # KINDLE_BROWSER_PATH or Chrome/Edge; they skip without one, except in CI
+npm run typecheck               # src, and the tests and scripts against it
 npm run build                   # dist/, then `node dist/cli.js --help`
 npm run build && npm run mcpb   # the Desktop bundle, checked by unpacking it and replaying a host handshake
 npm run render-plugin           # plugin/, .claude-plugin/ and skills/ from package.json and src/prompts
