@@ -108,7 +108,8 @@ function reply(payload: Json): CallToolResult {
     let items = payload[list] as unknown[];
     while (items.length > 1 && text.length > CHAR_LIMIT) {
       items = items.slice(0, Math.floor(items.length / 2));
-      body = { ...payload, [list]: items, truncated_response: true, hint: "Response cut to fit. Use limit/offset or a narrower query." };
+      const count = typeof payload.count === "number" ? { count: items.length } : {}; // what is returned, so paging by it skips nothing
+      body = { ...payload, [list]: items, ...count, truncated_response: true, hint: "Response cut to fit. Use limit/offset or a narrower query." };
       text = JSON.stringify(body, null, 2);
     }
   }

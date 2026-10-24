@@ -243,6 +243,20 @@ describe("MCP server", () => {
     expect(res.pending.instruction).not.toContain("kindle_mark_command_done");
   });
 
+  it("cuts a reply that is too long, and counts what it returns", async () => {
+    const { client, home } = await connected();
+    const store = new Store(join(home, "kindle.db"));
+    for (let i = 0; i < 60; i++) {
+      store.upsertHighlight("B0FAKE0004", makeHighlight({ bookId: "B0FAKE0004", text: "long ".repeat(400), locationStart: 5000 + i, amazonId: `B0FAKE0004:${i}:HIGHLIGHT:y${i}` }));
+    }
+    store.close();
+    const res = (await call(client, "kindle_get_highlights", { book: "B0FAKE0004", limit: 500 })).data;
+    expect(res.truncated_response).toBe(true);
+    expect(res.highlights.length).toBeLessThan(63);
+    expect(res.count).toBe(res.highlights.length); // a client paging on by count skips nothing
+    expect(JSON.stringify(res, null, 2).length).toBeLessThanOrEqual(25_000);
+  });
+
   it("returns a partial sync when out of time, keeps the result small, and continues on the next call", async () => {
     let { client, home } = await connected({ KINDLE_SYNC_BUDGET_MS: "1" });
     saveSession(join(home, "session.json"), { savedAt: "t", cookies: [{ name: "session-id", value: "abc", domain: "127.0.0.1", path: "/", expires: -1 }] });
