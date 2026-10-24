@@ -36,7 +36,7 @@ let base = "";
 beforeAll(async () => {
   server = await listenLocal((req, res) => {
     const page = fixturePage(new URL(req.url ?? "/", "http://localhost"));
-    res.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "session-id=from-browser; Path=/" }).end(page);
+    res.writeHead(200, { "Content-Type": "text/html", "Set-Cookie": "session-id=from-browser; Path=/; Secure; HttpOnly" }).end(page);
   });
   base = server.base;
 });
