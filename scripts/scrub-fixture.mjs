@@ -2,7 +2,7 @@
 // Turn a live capture (a `kindle-mcp doctor` page, a saved notebook page, a My Clippings.txt) into a fixture that
 // holds no reader data, then refuse to write it unless scripts/privacy-check.mjs accepts the result.
 //
-//   node scripts/scrub-capture.mjs IN OUT          (the capture is never read by anything else, never committed)
+//   node scripts/scrub-fixture.mjs IN OUT          (the capture is never read by anything else, never committed)
 //
 // What goes: titles, authors, highlights, notes (command tags stay; other tags and every other word become
 // placeholders), ASINs, the encoded annotation ids (and the account inside them), cover and link URLs, tokens,
@@ -126,7 +126,7 @@ export function scrub(raw, name) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [input, output] = process.argv.slice(2);
   if (!input || !output) {
-    console.error("usage: node scripts/scrub-capture.mjs IN OUT");
+    console.error("usage: node scripts/scrub-fixture.mjs IN OUT");
     process.exit(2);
   }
   const scrubbed = scrub(readFileSync(input, "utf8"), input);
@@ -135,9 +135,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   if (findings.length) {
     console.error(describeSources(terms));
     console.error(formatFindings(findings));
-    console.error(`\nscrub-capture: ${findings.length} finding(s) left after scrubbing; nothing was written. The reader decides whether the page chrome above is allowed (VOCABULARY.txt).`);
+    console.error(`\nscrub-fixture: ${findings.length} finding(s) left after scrubbing; nothing was written. The reader decides whether the page chrome above is allowed (VOCABULARY.txt).`);
     process.exit(1);
   }
   writeFileSync(output, scrubbed);
-  console.error(`scrub-capture: wrote ${output} (${describeSources(terms)})`);
+  console.error(`scrub-fixture: wrote ${output} (${describeSources(terms)})`);
 }

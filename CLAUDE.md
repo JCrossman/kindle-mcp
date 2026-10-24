@@ -12,9 +12,10 @@ git hooks (`.githooks`), in CI on every push (the tree and every new commit), on
 description (`pr-text`), and in the release workflow. Tests run isolated (`tests/helpers/isolate.ts`): no test reads
 the developer's settings, home folder or store. When it blocks you, that is the answer:
 change the text. Do not add a word to `VOCABULARY.txt`, edit the guard (`scripts/privacy-*.mjs`, `scripts/hooks`,
-`.githooks`, `.claude/settings.json`), use `--no-verify`, or look for another route. If a finding looks wrong, ask the
-reader. After creating or editing a PR, read its body back: the GitHub tool can append a session link; strip it.
-A live capture (`doctor-*.html`, a saved page) stays out of git; make fixtures with `scripts/scrub-capture.mjs`.
+`scripts/scrub-fixture.mjs`, `.githooks`, `.claude/settings.json`, `tests/privacy.test.ts`), use `--no-verify`, or look
+for another route. If a finding looks wrong, ask the reader. After creating or editing a PR, read its body back: the
+GitHub tool can append a session link; strip it.
+A live capture (`doctor-*.html`, a saved page) stays out of git; make fixtures with `scripts/scrub-fixture.mjs`.
 
 A reader's own words never go in a file you write, a test you run against their store, or a summary posted anywhere
 except in reply to them. Work from the invented fixtures; never read `~/.kindle-mcp/kindle.db` into a prompt or a file.
@@ -82,7 +83,7 @@ everything else (other installs, tools, settings, how the notebook is read, buil
 - `scripts/privacy-lib.mjs`, `privacy-check.mjs`, `hooks/privacy-gate.mjs`, `.githooks/`, `.claude/settings.json`,
   `tests/fixtures/VOCABULARY.txt` — the privacy guard (see the hard rule). Private terms come from `PRIVATE_TERMS`
   (a CI secret), `~/.kindle-mcp/private-terms.txt` and the reader's own `kindle.db`; findings name file, line and
-  term number, never the term. `scripts/scrub-capture.mjs` turns a live capture into a fixture. `tests/privacy-check.test.ts`.
+  term number, never the term. `scripts/scrub-fixture.mjs` turns a live capture into a fixture. `tests/privacy.test.ts`.
 - `src/plugin.ts` — generates the plugin (`plugin/`: manifest pointing at this version's release `.mcpb`, skills
   setup/routine/route/brief from `src/prompts/*.md`), the marketplace entry (`.claude-plugin/marketplace.json`, this
   repo is the marketplace) and `skills/kindle-router/SKILL.md`. `npm run render-plugin` writes them; `-- --dev` also
@@ -99,7 +100,7 @@ everything else (other installs, tools, settings, how the notebook is read, buil
   placeholder ids, `example.invalid` cover URLs, and only the words in `VOCABULARY.txt`. No real titles, ASINs or
   counts from anyone's library in files, commits or PR text (docs and privacy tests check).
 - When Amazon's page shape changes: `kindle-mcp doctor [--book X]`, run the capture through
-  `node scripts/scrub-capture.mjs IN OUT`, fix selectors, add a test. Never write a fixture by hand from a real page.
+  `node scripts/scrub-fixture.mjs IN OUT`, fix selectors, add a test. Never write a fixture by hand from a real page.
 - Keep the store and the MCP interface separate; the cron job and the server share one SQLite file (WAL).
 - The server never assumes a runner or a sink. Routing behaviour lives in `COMMANDS` and the prompt text.
 - A tag no command owns files only into a note named exactly like it, or the note the user chose for it with
