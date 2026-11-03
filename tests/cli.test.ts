@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,27 @@ function freshHome(): string {
 const hook = (out: string): string => `node -e "require('fs').writeFileSync(process.argv[1], String(process.env.KINDLE_PENDING))" "${out}"`;
 
 describe("kindle-mcp CLI", () => {
+  it("prints counts, not titles, notes or tags, unless --verbose; a deleted book note included", async () => {
+    const home = freshHome();
+    saveSignedIn(loadConfig().sessionPath);
+    const quiet = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errs = vi.spyOn(console, "error").mockImplementation(() => {});
+    const both = () => [...quiet.mock.calls, ...errs.mock.calls].map((c) => String(c[0])).join("\n");
+    expect(await main(["sync"])).toBe(0);
+    rmSync(join(home, "vault", "Kindle", "Placeholder Title, Part One.md")); // deleted in Obsidian: left deleted
+    quiet.mockClear();
+    errs.mockClear();
+    expect(await main(["sync"])).toBe(0);
+    const plain = both();
+    expect(plain).toContain('"deleted_book_notes":1');
+    expect(plain).not.toMatch(/Placeholder Title|garden/);
+    quiet.mockClear();
+    errs.mockClear();
+    expect(await main(["sync", "--verbose"])).toBe(0);
+    expect(both()).toContain("Placeholder Title, Part One");
+    quiet.mockRestore();
+    errs.mockRestore();
+  });
   it("syncs over plain HTTP with saved cookies, then runs the --on-pending hook", async () => {
     const home = freshHome();
     const cfg = loadConfig();
