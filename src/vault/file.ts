@@ -624,8 +624,8 @@ export function writeAgentNote(
     "source: kindle",
     `kindle-command: ${c.tag}`,
     `kindle-highlight: ${h.id}`,
-    `book: ${yamlString(h.title)}`,
-    ...(h.author ? [`author: ${yamlString(h.author)}`] : []),
+    `book: ${yamlString(neutralize(h.title))}`, // inert: plugins render property values as markdown
+    ...(h.author ? [`author: ${yamlString(neutralize(h.author))}`] : []),
     ...(h.location_start !== null ? [`location: ${h.location_start}`] : []),
     `created: ${localDate()}`,
     "ai-generated: true",

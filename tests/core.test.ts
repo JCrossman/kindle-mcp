@@ -284,6 +284,8 @@ describe("obsidian export", () => {
     const out = exportBook(store, bookId, vault);
     const text = readFileSync(join(vault, out.file), "utf8");
     expect(text).toContain("# &lt;script> Placeholder Title");
+    const frontmatter = text.split("\n---\n")[0];
+    expect(frontmatter).not.toMatch(/<%|<script/); // plugins render property values as markdown too
     expect(text).toContain("*<\\% Placeholder Author %>*");
     expect(text).toContain("```text");
     expect(text).toContain("> > ```text");
