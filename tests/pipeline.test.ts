@@ -167,17 +167,21 @@ describe("agent notes", () => {
       const post = h.commands.find((c) => c.tag === "post")!;
       const out = writeAgentNote(open.ctx, h, post, {
         title: "Compound interest: habits?",
-        content: "Exampleton's point applies. See [[Not A Real Note]] and [[Compound Interest]].\n\n```dataviewjs\nx\n```",
+        content: "Exampleton's point applies. See [[Not A Real Note]] and [[Compound Interest]].\n\n```dataviewjs\nx\n```\n\n![chart](https://host.invalid/c.png?d=1)",
         related: ["Ada Exampleton", "Nope"],
       });
       expect(out.path).toBe("Kindle/Posts/Compound interest habits.md");
       expect(out.removed_links).toEqual(["Not A Real Note"]);
       const text = w.read(out.path);
       expect(text).toContain(`kindle-highlight: ${h.id}`);
+      expect(text).toContain("ai-generated: true");
+      expect(text).toContain("*Drafted by Claude from your Kindle highlight. Check it before you rely on it.*");
       expect(text).toContain(`[[Placeholder Title, Part One#^kh-${h.id}|Placeholder Title, Part One, Location 1234]]`);
       expect(text).toContain("**Angle:** the compound interest idea applies to habits");
       expect(text).toContain("[[Ada Exampleton|Exampleton]]'s point applies. See Not A Real Note and [[Compound Interest]].");
       expect(text).toContain("```text");
+      expect(text).toContain("[chart](https://host.invalid/c.png?d=1)"); // a link, never an image that loads on open
+      expect(text).not.toContain("![chart]");
       expect(text).toContain("Related: [[Ada Exampleton]]");
       expect(w.store.pendingCommands()).toEqual([]);
       expect(w.store.getHighlight(h.id)!.commands_done_at).toBeTruthy();

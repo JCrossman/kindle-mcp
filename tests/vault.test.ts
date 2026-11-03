@@ -143,6 +143,20 @@ describe("vault writes", () => {
     expect(neutralize("```dataviewjs\ndv.x()\n```\n`$= dv.y` <% tp.z %> <script>")).toBe("```text\ndv.x()\n```\n`\\$= dv.y` <\\% tp.z %> &lt;script>");
     expect(neutralize("> ```dataviewjs\n> dv.x()\n> ```")).toBe("> ```text\n> dv.x()\n> ```");
     expect(neutralize("> - ```templater\n>   x\n>   ```")).toBe("> - ```text\n>   x\n>   ```");
+    // Nothing loads or runs when a note is opened: every image becomes a link, every HTML tag becomes text.
+    expect(neutralize("see ![x](https://host.invalid/p.png?d=secret)")).toBe("see [x](https://host.invalid/p.png?d=secret)");
+    expect(neutralize("![x]( <//host.invalid/p.png>)")).toBe("[x]( <//host.invalid/p.png>)");
+    expect(neutralize("![x [y]](https://host.invalid/i.png)")).toBe("[x [y]](https://host.invalid/i.png)"); // nested brackets
+    expect(neutralize("![x][ref] ![ref]\n\n[ref]: https://host.invalid/i.png")).toBe("[x][ref] [ref]\n\n[ref]: https://host.invalid/i.png");
+    expect(neutralize("![pic](attachments/a.png)")).toBe("[pic](attachments/a.png)");
+    expect(neutralize('<img src="https://host.invalid/i"> <VIDEO src=v> <svg>')).toBe('&lt;img src="https://host.invalid/i"> &lt;VIDEO src=v> &lt;svg>');
+    expect(neutralize('<span style="background-image:u&#114;l(https://host.invalid/i.png)">x</span>')).toBe(
+      '&lt;span style="background-image:u&#114;l(https://host.invalid/i.png)">x&lt;/span>',
+    ); // an encoded url() too
+    expect(neutralize('<table background="https://host.invalid/i">')).toBe('&lt;table background="https://host.invalid/i">');
+    expect(neutralize("![[Local Note]] [link](https://host.invalid) <https://host.invalid> a < b")).toBe(
+      "![[Local Note]] [link](https://host.invalid) <https://host.invalid> a < b",
+    );
     expect(hasBlockId("text\n\n^kh-abc\n", "kh-abc")).toBe(true);
     expect(hasBlockId("- a ^kh-abc-todo-1234", "kh-abc")).toBe(false);
     expect(hasBlockId("see [[Book#^kh-abc|Book]]", "kh-abc")).toBe(false);
@@ -180,6 +194,20 @@ describe("vault index", () => {
     expect(idx.search("distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]); // excluded, opted-out and Kindle notes stay out
     expect(idx.search("distraction", 8, true).map((h) => h.path).sort()).toEqual(["Concepts/Slow Craft.md", "Kindle/Some Book.md"]);
     expect(idx.related("Working without distraction on demanding tasks").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    idx.close();
+  });
+  it("keeps notes Claude wrote out of search and related notes, wherever they were moved, and flags them", () => {
+    const root = vaultWith({
+      "Concepts/Slow Craft.md": "Deep work without distraction.",
+      "Work/Old Draft.md": "---\nsource: kindle\nkindle-command: research\nkindle-highlight: 0123456789abcdef\n---\ndistraction draft",
+    });
+    const idx = VaultIndex.open(tmp("home-drafts"), root, { kindleFolder: "Kindle" });
+    idx.refresh(Date.now() + 10_000, true);
+    expect(idx.search("distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    expect(idx.related("work without distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    const all = idx.search("distraction", 8, true);
+    expect(all.find((h) => h.path === "Work/Old Draft.md")?.byClaude).toBe(true);
+    expect(all.find((h) => h.path === "Concepts/Slow Craft.md")?.byClaude).toBe(false);
     idx.close();
   });
   it("re-reads only what changed, forgets deleted notes, and reports an unfinished read", () => {

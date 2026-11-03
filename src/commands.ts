@@ -59,9 +59,11 @@ export const COMMANDS: CommandSpec[] = [
     result: "Claude researches it (web search when it has it) and saves a note with sources in `Research/`.",
     action:
       "Do the research. With web search available: find 3 to 5 sources, summarise them, say where they agree " +
-      "or disagree with the highlight, and include links. Always add the related highlights from the store and " +
-      "link the related notes from kindle_get_command_context where they fit. Without a web tool: write the three " +
-      "sharpest questions and state plainly that no research was performed. Save it with kindle_complete_command.",
+      "or disagree with the highlight, and list them under a `## Sources` heading, one link each; say what you " +
+      "could not confirm. Notes Claude wrote earlier are never sources. Always add the related highlights from the " +
+      "store and link the related notes from kindle_get_command_context where they fit. Without a web tool: write " +
+      "the three sharpest questions and state plainly that no research was performed. Save it with " +
+      "kindle_complete_command.",
   },
   {
     tag: "todo",

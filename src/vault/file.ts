@@ -499,6 +499,8 @@ export interface ReadNote {
   path: string;
   title: string;
   link: string;
+  /** Set for a note kindle-mcp wrote for one of Claude's @commands: a draft, not the user's own words. */
+  written_by?: "claude";
   chars: number;
   truncated: boolean;
   text: string;
@@ -523,6 +525,7 @@ export function readNote(ctx: FileContext, query: string, maxChars: number): Rea
     path: n.path,
     title: n.title,
     link: `[[${ctx.linker.linkText(n.path)}]]`,
+    ...(n.kindleHighlight ? { written_by: "claude" as const } : {}),
     chars: chars.length,
     truncated: chars.length > maxChars,
     text: chars.length > maxChars ? chars.slice(0, maxChars).join("") : text,
@@ -530,6 +533,8 @@ export function readNote(ctx: FileContext, query: string, maxChars: number): Rea
 }
 
 const FOLDERS: Record<string, string> = { post: "Posts", research: "Research" };
+/** The line under the title of every note Claude writes, so nobody mistakes it for their own. */
+const DRAFTED = "Drafted by Claude from your Kindle highlight. Check it before you rely on it.";
 const LEAD: Record<string, string> = { post: "Angle", research: "Question" };
 
 export interface AgentNote {
@@ -619,13 +624,16 @@ export function writeAgentNote(
     "source: kindle",
     `kindle-command: ${c.tag}`,
     `kindle-highlight: ${h.id}`,
-    `book: ${yamlString(h.title)}`,
-    ...(h.author ? [`author: ${yamlString(h.author)}`] : []),
+    `book: ${yamlString(neutralize(h.title))}`, // inert: plugins render property values as markdown
+    ...(h.author ? [`author: ${yamlString(neutralize(h.author))}`] : []),
     ...(h.location_start !== null ? [`location: ${h.location_start}`] : []),
     `created: ${localDate()}`,
+    "ai-generated: true",
     `tags: [kindle/${c.tag}]`,
     "---",
     `# ${title}`,
+    "",
+    `*${DRAFTED}*`,
     "",
     quoteBlock(h, link, false),
     "",

