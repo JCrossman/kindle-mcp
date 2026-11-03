@@ -33,9 +33,9 @@ will, and limits what following them could do:
   (symlinks and outside paths are refused). It appends to the reader's notes, changes only text it wrote
   itself and only while unedited (with a conflict check), and never deletes a file.
 - **Nothing written runs or phones home.** Text from a model or a book is made inert before it reaches
-  Obsidian: Dataview JS, JS Engine and Templater code becomes plain text, and nothing loads from the
-  network when a note is opened (remote images become links; scripts, frames, media, styles that load
-  URLs and similar HTML are shown as text).
+  Obsidian: Dataview JS, JS Engine and Templater code becomes plain text, every image becomes a link
+  (an `![[embed]]` of a vault file stays), and every HTML tag is shown as text, so nothing loads from the
+  network or runs when a note is opened. Frontmatter values copied from a book are cleaned the same way.
 - **Claude's own notes stay labelled.** Notes Claude writes carry `ai-generated: true` and say so in the
   note. They are never offered to Claude as related notes, are left out of vault search unless asked,
   and are marked `written_by: claude` when read, so an instruction slipped into one draft can't steer the

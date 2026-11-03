@@ -146,7 +146,7 @@ creates `Kindle/Projects/garden.md`. Any other tag, like `@roadmap`, works the s
 note as the angle or question, Claude's text with links to your notes, and a `Related:` line.
 Research notes list their sources. Links Claude invents to notes that don't exist are turned back
 into plain text, code that Obsidian plugins would run (Dataview JS, Templater) is made inert, and
-nothing loads from the internet when you open a note: images from the web become links.
+nothing loads or runs when you open a note: images become links and HTML shows as text.
 Claude never treats its own earlier notes as your notes or as sources, wherever you move them.
 
 **Linking rules.** Whole words, any case, like Obsidian's own "unlinked mentions". Never inside
