@@ -54,6 +54,8 @@ export interface SearchHit {
   path: string;
   title: string;
   snippet: string;
+  /** A note kindle-mcp wrote for one of Claude's @commands (its frontmatter says so), wherever it now lives. */
+  byClaude: boolean;
 }
 
 export interface IndexOptions {
@@ -324,13 +326,20 @@ export class VaultIndex {
     return rows[0]?.path ?? null;
   }
 
-  /** Full-text search over note titles, aliases and text. The Kindle folder is left out unless asked. */
+  /**
+   * Full-text search over note titles, aliases and text. The Kindle folder and the notes Claude
+   * wrote (wherever they were moved) are left out unless asked.
+   */
   search(query: string, limit = 8, includeKindle = false): SearchHit[] {
     const fts = ftsQuery(query);
     return fts ? this.match(fts, limit, includeKindle) : [];
   }
 
-  /** Notes that share the most distinctive words with a text (for related notes). */
+  /**
+   * Notes that share the most distinctive words with a text (for related notes): only the user's
+   * own. A note Claude wrote is never offered as context, so text injected into one draft can't
+   * steer the next.
+   */
   related(text: string, limit = 5): SearchHit[] {
     const fts = relatedQuery(text);
     return fts ? this.match(fts, limit, false) : [];
@@ -338,17 +347,20 @@ export class VaultIndex {
 
   private match(fts: string, limit: number, includeKindle: boolean): SearchHit[] {
     const prefix = `${this.opts.kindleFolder}/`;
-    const skip = includeKindle ? "" : "AND substr(path, 1, ?) != ?";
+    const skip = includeKindle ? "" : "AND substr(notes_fts.path, 1, ?) != ? AND n.kindle_highlight IS NULL";
     const args: Array<string | number> = [fts];
     if (!includeKindle) args.push(prefix.length, prefix);
     args.push(limit);
     try {
-      return this.db
+      const rows = this.db
         .prepare(
-          `SELECT path, title, snippet(notes_fts, 3, '', '', '...', 16) AS snippet FROM notes_fts
+          `SELECT notes_fts.path AS path, notes_fts.title AS title, snippet(notes_fts, 3, '', '', '...', 16) AS snippet,
+                  n.kindle_highlight IS NOT NULL AS by_claude
+           FROM notes_fts JOIN notes n ON n.path = notes_fts.path
            WHERE notes_fts MATCH ? ${skip} ORDER BY bm25(notes_fts, 0, 10, 5, 1) LIMIT ?`,
         )
-        .all(...args) as unknown as SearchHit[];
+        .all(...args) as Array<{ path: string; title: string; snippet: string; by_claude: number }>;
+      return rows.map(({ by_claude, ...hit }) => ({ ...hit, byClaude: Boolean(by_claude) }));
     } catch {
       return [];
     }

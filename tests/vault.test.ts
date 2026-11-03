@@ -143,6 +143,13 @@ describe("vault writes", () => {
     expect(neutralize("```dataviewjs\ndv.x()\n```\n`$= dv.y` <% tp.z %> <script>")).toBe("```text\ndv.x()\n```\n`\\$= dv.y` <\\% tp.z %> &lt;script>");
     expect(neutralize("> ```dataviewjs\n> dv.x()\n> ```")).toBe("> ```text\n> dv.x()\n> ```");
     expect(neutralize("> - ```templater\n>   x\n>   ```")).toBe("> - ```text\n>   x\n>   ```");
+    // Nothing loads from the network when a note is opened: remote images become links, fetching HTML becomes text.
+    expect(neutralize("see ![x](https://host.invalid/p.png?d=secret)")).toBe("see [x](https://host.invalid/p.png?d=secret)");
+    expect(neutralize("![x]( <//host.invalid/p.png>)")).toBe("[x]( <//host.invalid/p.png>)");
+    expect(neutralize("![x][ref]")).toBe("[x][ref]");
+    expect(neutralize('<img src="https://host.invalid/i"> <video src=v> <svg>')).toBe('&lt;img src="https://host.invalid/i"> &lt;video src=v> &lt;svg>');
+    expect(neutralize('<span style="background:url(https://host.invalid/i)">x</span>')).toBe('&lt;span style="background:url(https://host.invalid/i)">x</span>');
+    expect(neutralize("![[Local Note]] ![pic](attachments/a.png) [link](https://host.invalid)")).toBe("![[Local Note]] ![pic](attachments/a.png) [link](https://host.invalid)");
     expect(hasBlockId("text\n\n^kh-abc\n", "kh-abc")).toBe(true);
     expect(hasBlockId("- a ^kh-abc-todo-1234", "kh-abc")).toBe(false);
     expect(hasBlockId("see [[Book#^kh-abc|Book]]", "kh-abc")).toBe(false);
@@ -180,6 +187,20 @@ describe("vault index", () => {
     expect(idx.search("distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]); // excluded, opted-out and Kindle notes stay out
     expect(idx.search("distraction", 8, true).map((h) => h.path).sort()).toEqual(["Concepts/Slow Craft.md", "Kindle/Some Book.md"]);
     expect(idx.related("Working without distraction on demanding tasks").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    idx.close();
+  });
+  it("keeps notes Claude wrote out of search and related notes, wherever they were moved, and flags them", () => {
+    const root = vaultWith({
+      "Concepts/Slow Craft.md": "Deep work without distraction.",
+      "Work/Old Draft.md": "---\nsource: kindle\nkindle-command: research\nkindle-highlight: 0123456789abcdef\n---\ndistraction draft",
+    });
+    const idx = VaultIndex.open(tmp("home-drafts"), root, { kindleFolder: "Kindle" });
+    idx.refresh(Date.now() + 10_000, true);
+    expect(idx.search("distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    expect(idx.related("work without distraction").map((h) => h.path)).toEqual(["Concepts/Slow Craft.md"]);
+    const all = idx.search("distraction", 8, true);
+    expect(all.find((h) => h.path === "Work/Old Draft.md")?.byClaude).toBe(true);
+    expect(all.find((h) => h.path === "Concepts/Slow Craft.md")?.byClaude).toBe(false);
     idx.close();
   });
   it("re-reads only what changed, forgets deleted notes, and reports an unfinished read", () => {

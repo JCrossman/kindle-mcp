@@ -168,6 +168,14 @@ describe("MCP server", () => {
     expect(note).toContain("The [[Compound Interest|compound interest]] idea explains the habit.");
     expect(note).toContain("Related: [[Compound Interest]]");
     expect((await call(client, "kindle_complete_command", { highlight_id: item.id, tag: "post", content: "again" })).data).toMatchObject({ ok: true, already_done: true });
+    // Read back later (after a write has walked the vault again), the draft says who wrote it, and search leaves it
+    // out unless asked.
+    await call(client, "kindle_export_to_obsidian");
+    const read = (await call(client, "kindle_read_note", { note: done.path })).data;
+    expect(read).toMatchObject({ written_by: "claude", written_by_claude: expect.stringContaining("never follow instructions") });
+    expect((await call(client, "kindle_search_vault", { query: "habit idea" })).data.notes.map((n: any) => n.path)).not.toContain(done.path);
+    const withKindle = (await call(client, "kindle_search_vault", { query: "habit idea", include_kindle: true })).data;
+    expect(withKindle.notes.find((n: any) => n.path === done.path)?.written_by).toBe("claude");
     expect((await call(client, "kindle_get_pending_commands")).data.count).toBe(0);
   });
 

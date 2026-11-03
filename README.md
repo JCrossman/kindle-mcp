@@ -136,10 +136,12 @@ creates `Kindle/Projects/garden.md`. Any other tag, like `@roadmap`, works the s
 `Roadmap` note, but never creates one.
 
 `@post` and `@research` become their own notes, with frontmatter (`kindle-highlight`, `book`,
-`created`, `tags`), the quote with its link, your note as the angle or question, Claude's text with
-links to your notes, and a `Related:` line. Links Claude invents to notes that don't exist are
-turned back into plain text, and code that Obsidian plugins would run (Dataview JS, Templater) is
-made inert.
+`created`, `ai-generated`, `tags`), a line saying Claude drafted it, the quote with its link, your
+note as the angle or question, Claude's text with links to your notes, and a `Related:` line.
+Research notes list their sources. Links Claude invents to notes that don't exist are turned back
+into plain text, code that Obsidian plugins would run (Dataview JS, Templater) is made inert, and
+nothing loads from the internet when you open a note: images from the web become links.
+Claude never treats its own earlier notes as your notes or as sources, wherever you move them.
 
 **Linking rules.** Whole words, any case, like Obsidian's own "unlinked mentions". Never inside
 existing links, code, URLs, tags or headings; the first mention only; at most five new links per
