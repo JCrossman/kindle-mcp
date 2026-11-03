@@ -17,6 +17,8 @@ export interface SyncOptions {
   only?: string | null;
   browser?: boolean;
   log?: Log;
+  /** Name each book in the log. Off by default: logs end up in bug reports, and titles are the reader's. */
+  logTitles?: boolean;
   /** Epoch ms after which no new page is fetched; the result is then partial. */
   deadline?: number;
   /** Cancels between pages (the MCP client gave up on the call). */
@@ -187,7 +189,7 @@ export async function syncCloud(cfg: Config, store: Store, opts: SyncOptions = {
         const bookId = ingest(store, stats, book, highlights);
         store.markBookSynced(bookId, book.lastAnnotated);
         stats.books_synced++;
-        log(`  ${book.title.slice(0, 60)}: ${highlights.length} annotations`);
+        log(`  ${opts.logTitles ? book.title.slice(0, 60) : `book ${i + 1} of ${todo.length}`}: ${highlights.length} annotations`);
       }
       if (passStart && !partial) store.deleteState(FULL_PASS);
     } finally {

@@ -21,9 +21,10 @@ const USAGE = `kindle-mcp <command> [options]
   login                                  open a browser, sign in to Amazon once
   sync [--full] [--book X] [--browser]   pull the cloud notebook; --browser forces Playwright; then, with
        [--no-export] [--on-pending CMD]  OBSIDIAN_VAULT set, add new highlights and file @todo/@quote/@project
-                                         (--no-export skips that); --on-pending runs CMD if @commands are left
+       [--verbose]                       (--no-export skips that); --on-pending runs CMD if @commands are left;
+                                         output counts; --verbose names books, notes and tags (keep that to yourself)
   import-clippings PATH                  merge a My Clippings.txt from the device
-  export [--book X]                      update the vault without contacting Amazon (needs OBSIDIAN_VAULT)
+  export [--book X] [--verbose]          update the vault without contacting Amazon (needs OBSIDIAN_VAULT)
   link-existing [--apply] [--book X]     preview links for highlights exported before; --apply writes them;
                 [--always | --never]     --always also links future matches, --never stops the question
   status                                 counts, pending @commands, last run
@@ -56,6 +57,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       "on-pending": { type: "string" },
       "dry-run": { type: "boolean", default: false },
       since: { type: "string" },
+      verbose: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -106,13 +108,13 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const { AuthRequired } = await import("./notebook/client.js");
       let signIn: string | null = null;
       try {
-        const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser });
+        const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser, logTitles: values.verbose });
         console.log(JSON.stringify(stats));
       } catch (e) {
         if (!(e instanceof AuthRequired)) throw e;
         signIn = e.message; // the vault and the queue need no Amazon: finish those, then report it
       }
-      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
+      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null, values.verbose);
       const hook = values["on-pending"] ?? cfg.onPending;
       const pending = store.pendingCount();
       if (hook && pending > 0) {
@@ -131,11 +133,11 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       if (!positionals[1]) throw new Error("import-clippings needs the path to My Clippings.txt");
       const { importClippings } = await import("./sync.js");
       importClippings(store, positionals[1]);
-      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null);
+      if (cfg.obsidianVault && !values["no-export"]) await updateVault(cfg, store, null, values.verbose);
     } else if (cmd === "export") {
       if (!cfg.obsidianVault) throw new Error("Set OBSIDIAN_VAULT to your vault path first.");
       if (values.book && !store.findBook(values.book)) throw new Error(`No book matches '${values.book}'.`);
-      return (await updateVault(cfg, store, values.book ?? null)) ? 0 : 1;
+      return (await updateVault(cfg, store, values.book ?? null, values.verbose)) ? 0 : 1;
     } else if (cmd === "link-existing") {
       return await linkExisting(cfg, store, values.book ?? null, values.apply, values.always ? "always" : values.never ? "never" : null);
     } else if (cmd === "status") {
@@ -183,11 +185,24 @@ async function doctor(cfg: Config, asin: string | null, bookTitle: string | null
   }
 }
 
-/** The vault step; prints its summary. False when the vault could not be written. */
-async function updateVault(cfg: Config, store: Store, book: string | null): Promise<boolean> {
+/**
+ * The vault step; prints its summary. False when the vault could not be written. The summary counts by
+ * default: the full result names notes, folders and tags, and cron keeps this output in a log.
+ */
+async function updateVault(cfg: Config, store: Store, book: string | null, verbose: boolean): Promise<boolean> {
   const { runVaultStep } = await import("./vault/run.js");
   const r = runVaultStep(cfg, store, { restoreBook: book });
-  console.log(JSON.stringify({ obsidian: r }));
+  const counts = {
+    highlights_written: r.highlights_written,
+    books_written: r.books_written,
+    links_added: r.links_added,
+    filed: r.filed.reduce((n, f) => n + f.count, 0),
+    unrouted: r.unrouted.length,
+    deleted_book_notes: r.deleted_book_notes.length,
+    found_earlier: r.found_earlier,
+    ...(r.skipped ? { skipped: r.skipped } : {}),
+  };
+  console.log(JSON.stringify({ obsidian: verbose ? r : counts }));
   if (r.error) console.error(`ERROR: ${r.error}`);
   else if (r.skipped) console.error(`Vault not updated this time (${r.skipped}); the next run continues.`);
   return !r.error;

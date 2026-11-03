@@ -21,6 +21,40 @@ updated; use the release's Claude Desktop bundle or the plugin instead.
   the saved sign-in needs renewing, Amazon's sign-in page loaded in a hidden browser from the saved
   browser profile. There is no telemetry.
 
+## Claude and untrusted text
+
+Claude reads text nobody here wrote: book text and metadata from Amazon, notes in the vault (some clipped
+from the web), and web pages during @research. Any of it can carry instructions. The design assumes some
+will, and limits what following them could do:
+
+- **Only the reader starts work.** @commands are parsed from the note the reader typed on the Kindle, never
+  from a book's text, so a book can't create one.
+- **The server's reach is small.** It talks to nothing but Amazon and writes only inside the vault
+  (symlinks and outside paths are refused). It appends to the reader's notes, changes only text it wrote
+  itself and only while unedited (with a conflict check), and never deletes a file.
+- **Nothing written runs or phones home.** Text from a model or a book is made inert before it reaches
+  Obsidian: Dataview JS, JS Engine and Templater code becomes plain text, every image becomes a link
+  (an `![[embed]]` of a vault file stays), and every HTML tag is shown as text, so nothing loads from the
+  network or runs when a note is opened. Frontmatter values copied from a book are cleaned the same way.
+- **Claude's own notes stay labelled.** Notes Claude writes carry `ai-generated: true` and say so in the
+  note. They are never offered to Claude as related notes, are left out of vault search unless asked,
+  and are marked `written_by: claude` when read, so an instruction slipped into one draft can't steer the
+  next.
+- **Untrusted text is labelled.** Tool descriptions and results that carry it say it is data, not
+  instructions. That helps, but it is a request to the model, not a guarantee; the points above don't
+  depend on it.
+- **Unattended runs get fewer tools.** The scheduled routine is set up with only the Kindle tools and web
+  search: no page fetching, no email, files or other connected apps. That removes the direct ways out,
+  but not every one: web search still sends queries Claude chooses to a search service, and keeping
+  them to a few neutral words is an instruction to the model, not a filter. A query carrying private
+  text remains a model-dependent risk. Tools that change settings or the vault's structure (`kindle_teach_tag`,
+  `kindle_set_vault`, `kindle_link_existing_highlights`, `kindle_login`) stay behind the app's permission
+  prompt.
+
+Known limits: Claude still sees your highlights and the notes it reads, as with anything shared in a
+conversation; in Claude Code or Cowork, where Claude can read files, it can read the data folder,
+including the saved Amazon session. Report a way around any of the above as a vulnerability.
+
 Fixtures under `tests/fixtures` hold placeholder text only: the page markup Amazon uses, with invented titles,
 authors, highlights and notes, fake ASINs and no account ids or tokens. A check (`scripts/privacy-check.mjs`)
 refuses anything else, in CI and in the git hooks. Please keep new fixtures the same way.
