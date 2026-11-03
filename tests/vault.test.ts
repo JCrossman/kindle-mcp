@@ -143,13 +143,20 @@ describe("vault writes", () => {
     expect(neutralize("```dataviewjs\ndv.x()\n```\n`$= dv.y` <% tp.z %> <script>")).toBe("```text\ndv.x()\n```\n`\\$= dv.y` <\\% tp.z %> &lt;script>");
     expect(neutralize("> ```dataviewjs\n> dv.x()\n> ```")).toBe("> ```text\n> dv.x()\n> ```");
     expect(neutralize("> - ```templater\n>   x\n>   ```")).toBe("> - ```text\n>   x\n>   ```");
-    // Nothing loads from the network when a note is opened: remote images become links, fetching HTML becomes text.
+    // Nothing loads or runs when a note is opened: every image becomes a link, every HTML tag becomes text.
     expect(neutralize("see ![x](https://host.invalid/p.png?d=secret)")).toBe("see [x](https://host.invalid/p.png?d=secret)");
     expect(neutralize("![x]( <//host.invalid/p.png>)")).toBe("[x]( <//host.invalid/p.png>)");
-    expect(neutralize("![x][ref]")).toBe("[x][ref]");
-    expect(neutralize('<img src="https://host.invalid/i"> <video src=v> <svg>')).toBe('&lt;img src="https://host.invalid/i"> &lt;video src=v> &lt;svg>');
-    expect(neutralize('<span style="background:url(https://host.invalid/i)">x</span>')).toBe('&lt;span style="background:url(https://host.invalid/i)">x</span>');
-    expect(neutralize("![[Local Note]] ![pic](attachments/a.png) [link](https://host.invalid)")).toBe("![[Local Note]] ![pic](attachments/a.png) [link](https://host.invalid)");
+    expect(neutralize("![x [y]](https://host.invalid/i.png)")).toBe("[x [y]](https://host.invalid/i.png)"); // nested brackets
+    expect(neutralize("![x][ref] ![ref]\n\n[ref]: https://host.invalid/i.png")).toBe("[x][ref] [ref]\n\n[ref]: https://host.invalid/i.png");
+    expect(neutralize("![pic](attachments/a.png)")).toBe("[pic](attachments/a.png)");
+    expect(neutralize('<img src="https://host.invalid/i"> <VIDEO src=v> <svg>')).toBe('&lt;img src="https://host.invalid/i"> &lt;VIDEO src=v> &lt;svg>');
+    expect(neutralize('<span style="background-image:u&#114;l(https://host.invalid/i.png)">x</span>')).toBe(
+      '&lt;span style="background-image:u&#114;l(https://host.invalid/i.png)">x&lt;/span>',
+    ); // an encoded url() too
+    expect(neutralize('<table background="https://host.invalid/i">')).toBe('&lt;table background="https://host.invalid/i">');
+    expect(neutralize("![[Local Note]] [link](https://host.invalid) <https://host.invalid> a < b")).toBe(
+      "![[Local Note]] [link](https://host.invalid) <https://host.invalid> a < b",
+    );
     expect(hasBlockId("text\n\n^kh-abc\n", "kh-abc")).toBe(true);
     expect(hasBlockId("- a ^kh-abc-todo-1234", "kh-abc")).toBe(false);
     expect(hasBlockId("see [[Book#^kh-abc|Book]]", "kh-abc")).toBe(false);
