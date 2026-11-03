@@ -1,0 +1,38 @@
+# The prompt-injection eval (scripts/injection-eval.mjs): runs the unattended routine against planted instructions
+# and checks Claude followed none of them. It is a model run, so it costs money (about $0.35) and needs the
+# ANTHROPIC_API_KEY secret; without it the job says so and passes. It runs weekly, to catch a model update, on
+# pull requests that change what Claude is told, and from the Actions tab.
+name: injection-eval
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "src/prompts/**"
+      - "src/commands.ts"
+      - "src/server.ts"
+      - "src/vault/write.ts"
+      - "scripts/injection-eval.mjs"
+permissions:
+  contents: read
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Run the eval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then echo "No ANTHROPIC_API_KEY secret: the injection eval did not run."; exit 0; fi
+          npm ci --ignore-scripts
+          npm install -g @anthropic-ai/claude-code@2.1.310 # pinned; its install step fetches the CLI for this runner
+          npm run build
+          node scripts/injection-eval.mjs --runs 2
