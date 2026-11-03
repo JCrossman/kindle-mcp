@@ -41,7 +41,8 @@
     "render-plugin": "tsx scripts/render-plugin.ts",
     "mcpb": "node scripts/build-mcpb.mjs",
     "prepare": "git config core.hooksPath .githooks || true",
-    "privacy": "node scripts/privacy-check.mjs"
+    "privacy": "node scripts/privacy-check.mjs",
+    "eval:injection": "npm run build && node scripts/injection-eval.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
