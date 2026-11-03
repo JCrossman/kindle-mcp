@@ -115,8 +115,9 @@ function header(book: ExportBook): string {
   const byline = neutralize(author).replace(/\s*\n\s*/g, " ");
   return [
     "---",
-    `title: ${yamlString(title)}`,
-    `author: ${yamlString(author)}`,
+    // Inert here too: Dataview and other plugins render property values as markdown.
+    `title: ${yamlString(neutralize(title))}`,
+    `author: ${yamlString(neutralize(author))}`,
     `asin: ${yamlString(book.asin ?? "")}`,
     "source: kindle",
     "tags: [kindle]",
@@ -131,7 +132,8 @@ function header(book: ExportBook): string {
 
 /** Where a book's note is: where the user moved it, where it was written, or the default. Null if deleted. */
 export function bookNotePath(store: Store, ctx: ExportContext, book: ExportBook): string | null {
-  const found = ctx.index?.findBookNote(book.asin, book.title) ?? null;
+  const inert = neutralize(book.title);
+  const found = (ctx.index?.findBookNote(book.asin, book.title) ?? (inert !== book.title ? ctx.index?.findBookNote(book.asin, inert) : null)) ?? null;
   if (found && ctx.vault.exists(found)) return found;
   const recorded = store.bookNote(ctx.vault.root, book.book_id);
   if (recorded && ctx.vault.exists(recorded)) return recorded;
