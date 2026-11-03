@@ -92,8 +92,12 @@ For cron or launchd, hourly is cheap. The sync files what it can; `--on-pending`
 when @post or @research is left:
 
 ```cron
-30 * * * * PATH=/usr/local/bin:$PATH kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch,WebFetch"' >> ~/.kindle-mcp/sync.log 2>&1
+30 * * * * PATH=/usr/local/bin:$PATH kindle-mcp sync --on-pending 'claude -p "$(kindle-mcp prompt route-pending)" --allowedTools "mcp__kindle,WebSearch"' >> ~/.kindle-mcp/sync.log 2>&1
 ```
+
+Nobody watches that run, and it reads book text and web results, so give it only the Kindle tools and web
+search: no WebFetch (it can send anything to any address), no mail, files or other MCP servers. The log
+counts books; `sync --verbose` names them, so keep such a log out of bug reports.
 
 Cron doesn't see the extension's settings, but it reads the settings file: set the vault there once
 with `kindle-mcp config set vault ~/path/to/vault` (or put `OBSIDIAN_VAULT=...` in the line).
@@ -331,4 +335,14 @@ check fixtures and the structural rules, which is what stops new leaks.
 
 ## Next
 
-- Streamable HTTP transport with a token, for Claude on the web and mobile.
+- Streamable HTTP transport with a token, for Claude on the web and mobile. It makes the store reachable from
+  outside the machine, so it is designed before it is built:
+  - listen on 127.0.0.1 by default; anything else only behind TLS (a tunnel or a reverse proxy);
+  - one token per client, from the system keychain, never in a URL or a log; read-only unless the reader
+    grants writes, and `kindle_login`, `kindle_set_vault` and vault writes never available remotely by default;
+  - check `Origin` and `Host` on every request (the MCP spec requires it against DNS rebinding);
+  - rate limits per token, and a log of remote calls (tool and time, never arguments or results);
+  - the same tools and results as stdio: one code path, so the protections above apply unchanged.
+- Amazon cookies in the system keychain (macOS Keychain, Windows DPAPI, libsecret), tested on each system. The
+  saved browser profile still holds Amazon's "remember me", so this narrows what an agent with file access can
+  copy rather than closing it.

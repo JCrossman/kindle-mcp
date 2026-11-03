@@ -36,7 +36,12 @@ describe("kindle-mcp CLI", () => {
     saveSignedIn(cfg.sessionPath);
     const out = join(home, "hook.txt");
 
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await main(["sync", "--export", "--on-pending", hook(out)])).toBe(0);
+    const log = logged.mock.calls.map((c) => String(c[0])).join("\n");
+    logged.mockRestore();
+    expect(log).toMatch(/book 1 of 2: \d+ annotations/); // the log counts books and never names them
+    expect(log).not.toContain("Placeholder Title");
     expect(readFileSync(out, "utf8")).toBe("1"); // one highlight carries @post @project; @project was filed, @post is left
     expect(amazon.seenCookies.at(-1)).toContain("session-id=abc");
     expect(amazon.redirects).toBeGreaterThan(0); // benign redirects are followed, not reported as sign-in

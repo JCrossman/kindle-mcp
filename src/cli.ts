@@ -21,7 +21,8 @@ const USAGE = `kindle-mcp <command> [options]
   login                                  open a browser, sign in to Amazon once
   sync [--full] [--book X] [--browser]   pull the cloud notebook; --browser forces Playwright; then, with
        [--no-export] [--on-pending CMD]  OBSIDIAN_VAULT set, add new highlights and file @todo/@quote/@project
-                                         (--no-export skips that); --on-pending runs CMD if @commands are left
+       [--verbose]                       (--no-export skips that); --on-pending runs CMD if @commands are left;
+                                         --verbose names each book in the log (keep that log to yourself)
   import-clippings PATH                  merge a My Clippings.txt from the device
   export [--book X]                      update the vault without contacting Amazon (needs OBSIDIAN_VAULT)
   link-existing [--apply] [--book X]     preview links for highlights exported before; --apply writes them;
@@ -56,6 +57,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       "on-pending": { type: "string" },
       "dry-run": { type: "boolean", default: false },
       since: { type: "string" },
+      verbose: { type: "boolean", default: false },
       help: { type: "boolean", short: "h", default: false },
     },
   });
@@ -106,7 +108,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
       const { AuthRequired } = await import("./notebook/client.js");
       let signIn: string | null = null;
       try {
-        const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser });
+        const stats = await syncCloud(cfg, store, { full: values.full, only: values.book ?? null, browser: values.browser, logTitles: values.verbose });
         console.log(JSON.stringify(stats));
       } catch (e) {
         if (!(e instanceof AuthRequired)) throw e;

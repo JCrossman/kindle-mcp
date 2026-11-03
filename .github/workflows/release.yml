@@ -79,6 +79,7 @@ jobs:
           VERSION: ${{ steps.pkg.outputs.version }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = push ]; then where="--verify-tag"; else where="--target=$GITHUB_SHA"; fi
+          sum=$(sha256sum "$NAME-$VERSION.mcpb" | cut -d' ' -f1)
           gh release create "v$VERSION" "$NAME-$VERSION.mcpb" "$where" \
             --title "$NAME $VERSION" \
-            --notes "Claude Desktop: download the .mcpb below and open it (Settings, Extensions)."
+            --notes "Claude Desktop: download the .mcpb below and open it (Settings, Extensions). SHA-256 of the bundle: $sum"
