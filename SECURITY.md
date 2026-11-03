@@ -44,8 +44,10 @@ will, and limits what following them could do:
   instructions. That helps, but it is a request to the model, not a guarantee; the points above don't
   depend on it.
 - **Unattended runs get fewer tools.** The scheduled routine is set up with only the Kindle tools and web
-  search: no page fetching, no email, files or other connected apps, so nothing it reads can make it
-  send data out. Tools that change settings or the vault's structure (`kindle_teach_tag`,
+  search: no page fetching, no email, files or other connected apps. That removes the direct ways out,
+  but not every one: web search still sends queries Claude chooses to a search service, and keeping
+  them to a few neutral words is an instruction to the model, not a filter. A query carrying private
+  text remains a model-dependent risk. Tools that change settings or the vault's structure (`kindle_teach_tag`,
   `kindle_set_vault`, `kindle_link_existing_highlights`, `kindle_login`) stay behind the app's permission
   prompt.
 

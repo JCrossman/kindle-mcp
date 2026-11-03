@@ -25,12 +25,16 @@ step needs them, stop and wait.
      in it directly) and not the data folder (it holds the Amazon session).
    - In the Code tab: Routines, New routine, Local. Instructions: `/kindle:routine`. Leave the
      permission mode on Manual, select the folder, leave Worktree off, pick a schedule.
+   - Turn on only the Kindle tools for the routine (the + menu, Connectors): no email, Drive,
+     calendar or other connected apps. A run nobody watches reads book text and web pages and
+     shouldn't also be able to send things out.
    - Create, then Run now, and answer each permission prompt with Always allow for
      kindle_sync, kindle_get_pending_commands, kindle_get_command_context,
      kindle_complete_command, kindle_search_vault, kindle_read_note and kindle_status, plus
-     WebSearch and WebFetch for @research. Never always-allow kindle_login (it opens a window),
-     kindle_link_existing_highlights (it changes older notes), kindle_teach_tag or
-     kindle_set_vault (both are the user's call).
+     WebSearch for @research. Not WebFetch: it can send anything to any address, so the
+     routine sticks to search results and deeper reading happens in a chat. Never always-allow
+     kindle_login (it opens a window), kindle_link_existing_highlights (it changes older notes),
+     kindle_teach_tag or kindle_set_vault (both are the user's call).
 6. If every Kindle tool shows up twice, the Claude Desktop extension is also on in this session.
    Suggest turning it off here (the + menu, Connectors): the plugin brings the same tools.
 7. Finish with what's set up, and what they can say next: "Sync my Kindle highlights",
